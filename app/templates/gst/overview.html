@@ -1,0 +1,102 @@
+{% extends "base.html" %}{% import "_macros.html" as m %}
+{% set nav = 'overview' %}
+{% block title %}GST 80:20{% endblock %}
+{% block subnav %}{% include "_gst_nav.html" %}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow">Accounts — Indirect Tax</div>
+    <h1>GST 80:20 Input Credit</h1>
+    <p class="sub">Monthly classifications and the registered-share figure follow 80-20.py.
+      Project-level threshold indicators below are supplementary summaries of those rows.</p></div>
+  <div class="actions">
+    {% if user.can_edit %}<a class="btn primary" href="/gst8020/new">New calculation</a>{% endif %}
+  </div>
+</div>
+
+{% if not runs %}
+<div class="card"><div class="empty">
+  <p>No calculations yet.</p>
+  {% if user.can_edit %}
+  <p class="note">Upload a month's Day Book, Search Voucher and Creditors exports to begin.</p>
+  <a class="btn primary" href="/gst8020/new" style="margin-top:10px">Start the first calculation</a>
+  {% else %}<p class="note">A preparer needs to run the first month.</p>{% endif %}
+</div></div>
+{% else %}
+
+{% for y in fy %}
+{% set s = y.total %}
+<section>
+  <h2>{{ y.fy }} — year to date</h2>
+  <div class="card hero">
+    <div>
+      <div class="eyebrow">Aggregate registered share · project tests below</div>
+      <div class="bignum">{{ s.pct | pct }}</div>
+      {{ m.verdict(s, cfg) }}
+      {{ m.gauge(s, cfg) }}
+    </div>
+    <div class="stats">
+      <div class="stat big"><span>Eligible spend</span><b>{{ s.eligible | inr }}</b></div>
+      <div class="stat"><span>Registered</span><b>{{ s.registered | inr }}</b></div>
+      <div class="stat"><span>Projects below floor</span><b>{{ s.below_projects }}</b></div>
+      <div class="stat"><span>Unregistered</span><b>{{ s.unregistered | inr }}</b></div>
+      <div class="stat {% if s.gap %}bad{% endif %}"><span>Project-wise indicative exposure @ {{ cfg.shortfall_tax_rate }}%</span><b>{{ s.exposure | inr }}</b></div>
+    </div>
+  </div>
+
+  <div class="grid g2" style="margin-top:14px">
+    <div class="card">
+      <div style="padding:15px 16px 4px"><h3>By project — supplementary indicator from Python rows</h3></div>
+      <div class="scroll"><table>
+        <thead><tr><th>Project</th><th class="n">Eligible</th><th class="n">Registered %</th>
+          <th style="width:120px">Against floor</th><th class="n">Exposure</th></tr></thead>
+        <tbody>
+        {% for p, v in y.projects.items() %}
+          <tr><td>{{ p }}</td><td class="n">{{ v.eligible | lakh }}</td>
+            <td class="n">{{ v.pct | pct }}</td>
+            <td><div class="bar {% if v.pct >= cfg.threshold_pct %}ok{% else %}bad{% endif %}">
+              <i style="width:{{ [v.pct, 100] | min | round(2) }}%"></i></div></td>
+            <td class="n" {% if v.gap %}style="color:var(--bad)"{% endif %}>{{ v.exposure | lakh }}</td></tr>
+        {% endfor %}
+        </tbody></table></div>
+    </div>
+
+    <div class="card">
+      <div style="padding:15px 16px 4px"><h3>Month by month</h3></div>
+      <div class="scroll"><table>
+        <thead><tr><th>Month</th><th class="n">Eligible</th><th class="n">Registered %</th>
+          <th>Status</th><th></th></tr></thead>
+        <tbody>
+        {% for mo in y.months %}
+          <tr><td>{{ mo.run.period_month }}</td>
+            <td class="n">{{ mo.s.eligible | lakh }}</td>
+            <td class="n">{{ mo.s.pct | pct }}</td>
+            <td>{% if mo.run.status == 'frozen' %}<span class="pill p-ok">Frozen</span>
+                {% else %}<span class="pill p-mute">Draft</span>{% endif %}</td>
+            <td><a href="/gst8020/runs/{{ mo.run.id }}">Open</a></td></tr>
+        {% endfor %}
+        </tbody></table></div>
+    </div>
+  </div>
+
+  {% if s.below_projects or s.pct < cfg.alert_buffer_pct %}
+  <div class="callout {% if s.below_projects %}err{% else %}warn{% endif %}" style="margin-top:14px">
+    <strong>{{ s.below_projects }} project{{ '' if s.below_projects == 1 else 's' }} below the floor.</strong>
+    The aggregate percentage does not offset a project's gap. Review the project table and
+    the open voucher issues before using this indicative position.
+  </div>
+  {% endif %}
+</section>
+{% endfor %}
+
+<section>
+  <div class="tiles">
+    <div class="tile"><div class="k">Open rectifications</div><div class="v">{{ open_rect }}</div>
+      <div class="n"><a href="/gst8020/rectifications">Work the queue</a></div></div>
+    <div class="tile"><div class="k">Creditors on file</div><div class="v">{{ creditor_count }}</div>
+      <div class="n"><a href="/gst8020/creditors">Review GSTINs</a></div></div>
+    <div class="tile"><div class="k">Calculations stored</div><div class="v">{{ runs | length }}</div>
+      <div class="n">Every run is kept and can be reopened</div></div>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

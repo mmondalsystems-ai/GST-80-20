@@ -1,0 +1,66 @@
+{% extends "base.html" %}{% set nav = 'overview' %}
+{% block title %}Suppliers · {{ run.period_month }}{% endblock %}
+{% block subnav %}{% include "_gst_nav.html" %}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow"><a href="/gst8020/runs/{{ run.id }}">{{ run.label }}</a></div>
+    <h1>{{ status }} suppliers by spend</h1>
+    <p class="sub">Spelling variants of the same supplier are grouped, so one relationship reads as
+      one lever rather than three small ones. The grouping is for reading only — the calculation
+      still matches names exactly.</p></div>
+  <div class="actions">
+    <a class="btn {% if status == 'Unregistered' %}primary{% endif %}" href="?status=Unregistered">Unregistered</a>
+    <a class="btn {% if status == 'Registered' %}primary{% endif %}" href="?status=Registered">Registered</a>
+  </div>
+</div>
+
+{% if status == 'Unregistered' and stats.gap %}
+<div class="callout warn" style="margin-bottom:18px">
+  The {{ stats.gap | inr }} indicative shortfall is the sum of separate project gaps.
+  Review supplier choices within each project; this cross-project ranking alone cannot
+  close a specific project's gap.
+</div>
+{% endif %}
+
+<div class="card scroll">
+{% if clusters %}
+<table>
+  <thead><tr><th>Supplier</th><th class="n">Spend</th><th class="n">Share</th>
+    <th class="n">Running total</th><th class="n">Vouchers</th><th>Names in the ledger</th></tr></thead>
+  <tbody>
+  {% for c in clusters %}
+  <tr>
+    <td><strong>{{ c.names[0] }}</strong>
+      {% if c.variants > 1 %}<br><span class="pill p-warn">{{ c.variants }} spellings</span>{% endif %}
+      {% if c.settlement %}<br><span class="pill p-mute">not a supplier — direct cash/bank expense</span>{% endif %}</td>
+    <td class="n">{{ c.amount | inr }}</td>
+    <td class="n">{{ (c.amount / total * 100) | pct }}</td>
+    <td class="n">{{ c.cum_pct | pct }}</td>
+    <td class="n">{{ c.vouchers }}</td>
+    <td class="note">{{ c.names | join(' · ') }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<div class="empty">Nothing in this bucket.</div>{% endif %}
+</div>
+
+{% if clusters | selectattr('settlement') | list %}
+<div class="callout" style="margin-top:16px">
+  <strong>Some rows are settlement ledgers, not suppliers.</strong> Where an expense was paid
+  straight from a bank, cash or imprest account and no supplier was recorded against it, the
+  payment ledger stands in as the party. These are historical rows from an earlier
+  calculation mode. New runs follow the supplied Python party resolver; correct the
+  underlying Tally exports before recalculating a draft month.
+</div>
+{% endif %}
+
+{% if clusters | selectattr('variants', 'gt', 1) | list %}
+<div class="callout" style="margin-top:16px">
+  <strong>Near-duplicate supplier names found.</strong> Rows marked with more than one spelling are
+  separate ledgers in Tally that look like the same supplier. Only one of them may carry a GSTIN.
+  Confirm them by hand — the system deliberately does not merge names automatically, because a
+  wrong merge would move real money between buckets.
+</div>
+{% endif %}
+{% endblock %}

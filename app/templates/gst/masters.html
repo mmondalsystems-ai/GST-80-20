@@ -1,0 +1,62 @@
+{% extends "base.html" %}{% set nav = 'masters' %}
+{% block title %}Masters{% endblock %}
+{% block subnav %}{% include "_gst_nav.html" %}{% endblock %}
+{% block content %}
+<div class="page-head"><div>
+  <h1>Calculation masters</h1>
+  <p class="sub">Only the Python script's per-run group selections can change its output.
+    Dashboard-only thresholds are separate. Every run stores its settings;
+    frozen months remain unchanged.</p>
+</div></div>
+
+<div class="callout" style="margin-bottom:20px">
+  <strong>Golden calculation protected.</strong> Party resolution, GST status, bank treatment,
+  approved party corrections and duplicate-CGST repair follow <span class="mono">80-20.py</span>
+  and cannot be changed here.
+</div>
+
+<form method="post" action="/gst8020/masters">
+  <input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}">
+<div class="grid g2">
+  <div class="card pad">
+    <h3>Row selection</h3>
+    <label class="field"><span>Included Fixed Group Names — one per line</span>
+      <textarea name="include_fixed_groups">{{ cfg.include_fixed_groups | join('\n') }}</textarea>
+      <span class="help">Leave empty for the approved script's dynamic default: include every
+        group in this upload except its non-cost group list. The July fixture resolves to
+        Current Assets and Fixed Assets.</span>
+    </label>
+    <label class="field"><span>Excluded Parent Group Names — one per line</span>
+      <textarea name="exclude_parent_groups">{{ cfg.exclude_parent_groups | join('\n') }}</textarea>
+      <span class="help">The golden default excludes TDS Receivable.</span>
+    </label>
+  </div>
+
+  <div class="card pad">
+    <h3>Eligibility keywords</h3>
+    <p class="note">Fixed by the supplied <span class="mono">80-20.py</span>. Change the
+      approved Python source to change classification; this portal does not override it.</p>
+    <pre class="mono">{{ cfg.ineligible_keywords | join('\n') }}</pre>
+  </div>
+
+  <div class="card pad">
+    <h3>Reporting thresholds</h3>
+    <div class="grid g2">
+      <label class="field"><span>Registered-share floor (%)</span>
+        <input type="number" step="0.01" name="threshold_pct" value="{{ cfg.threshold_pct }}"></label>
+      <label class="field"><span>Working alert buffer (%)</span>
+        <input type="number" step="0.01" name="alert_buffer_pct" value="{{ cfg.alert_buffer_pct }}"></label>
+      <label class="field"><span>Indicative shortfall tax rate (%)</span>
+        <input type="number" step="0.01" name="shortfall_tax_rate" value="{{ cfg.shortfall_tax_rate }}"></label>
+    </div>
+    <p class="note">These values affect dashboards only; they do not change golden row classification.</p>
+  </div>
+</div>
+
+{% if user.can_edit %}
+<div class="actions" style="margin-top:18px"><button class="primary" type="submit">Save masters</button></div>
+{% else %}
+<p class="note" style="margin-top:18px">You have read-only access.</p>
+{% endif %}
+</form>
+{% endblock %}

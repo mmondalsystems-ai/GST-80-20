@@ -1,0 +1,9 @@
+<div class="subnav"><div class="inner">
+  <a href="/gst8020" {% if nav == 'overview' %}class="on"{% endif %}>Overview</a>
+  <a href="/gst8020/year" {% if nav == 'year' %}class="on"{% endif %}>Year to date</a>
+  <a href="/gst8020/rectifications" {% if nav == 'rect' %}class="on"{% endif %}>Rectification queue</a>
+  <a href="/gst8020/creditors" {% if nav == 'creditors' %}class="on"{% endif %}>Creditors &amp; GSTIN</a>
+  <a href="/gst8020/masters" {% if nav == 'masters' %}class="on"{% endif %}>Masters</a>
+  <a href="/admin/audit" {% if nav == 'audit' %}class="on"{% endif %}>Audit trail</a>
+  {% if user.can_edit %}<a href="/gst8020/new" {% if nav == 'new' %}class="on"{% endif %}>New calculation</a>{% endif %}
+</div></div>

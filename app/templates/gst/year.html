@@ -1,0 +1,75 @@
+{% extends "base.html" %}{% import "_macros.html" as m %}{% set nav = 'year' %}
+{% block title %}Year to date{% endblock %}
+{% block subnav %}{% include "_gst_nav.html" %}{% endblock %}
+{% block content %}
+<div class="page-head"><div>
+  <h1>Year to date</h1>
+  <p class="sub">This rolls up rows calculated by 80-20.py. Project shortfalls and
+    exposure are supplementary portal indicators, not outputs of that script.</p></div></div>
+
+{% if not fy %}<div class="card"><div class="empty">No calculations stored yet.</div></div>{% endif %}
+
+{% for y in fy %}
+{% set s = y.total %}
+<section>
+  <h2>{{ y.fy }}</h2>
+  <div class="card hero">
+    <div>
+      <div class="eyebrow">Aggregate share · {{ y.runs | length }} month(s) recorded; project tests below</div>
+      <div class="bignum">{{ s.pct | pct }}</div>
+      {{ m.verdict(s, cfg) }}
+      {{ m.gauge(s, cfg) }}
+    </div>
+    <div class="stats">
+      <div class="stat big"><span>Eligible spend</span><b>{{ s.eligible | inr }}</b></div>
+      <div class="stat"><span>Registered</span><b>{{ s.registered | inr }}</b></div>
+      <div class="stat"><span>Projects below floor</span><b>{{ s.below_projects }}</b></div>
+      <div class="stat"><span>Shortfall against floor</span><b>{{ s.gap | inr }}</b></div>
+      <div class="stat {% if s.gap %}bad{% endif %}"><span>Project-wise indicative exposure @ {{ cfg.shortfall_tax_rate }}%</span><b>{{ s.exposure | inr }}</b></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div style="padding:15px 16px 4px"><h3>Per project — each is tested separately</h3></div>
+    <div class="scroll"><table>
+      <thead><tr><th>Project</th><th class="n">Eligible</th><th class="n">Registered</th>
+        <th class="n">Unregistered</th><th class="n">Registered %</th>
+        <th style="width:130px">Against floor</th><th class="n">Shortfall</th><th class="n">Exposure</th></tr></thead>
+      <tbody>{% for p, v in y.projects.items() %}
+        <tr><td><strong>{{ p }}</strong></td>
+          <td class="n">{{ v.eligible | inr }}</td><td class="n">{{ v.registered | inr }}</td>
+          <td class="n">{{ v.unregistered | inr }}</td>
+          <td class="n">{{ v.pct | pct }}</td>
+          <td><div class="bar {% if v.pct >= cfg.threshold_pct %}ok{% else %}bad{% endif %}">
+            <i style="width:{{ [v.pct, 100] | min | round(2) }}%"></i></div></td>
+          <td class="n">{{ v.gap | inr }}</td>
+          <td class="n" {% if v.gap %}style="color:var(--bad)"{% endif %}>{{ v.exposure | inr }}</td></tr>
+      {% endfor %}
+      <tr class="tot"><td>All projects</td><td class="n">{{ s.eligible | inr }}</td>
+        <td class="n">{{ s.registered | inr }}</td>
+        <td class="n">{{ s.unregistered | inr }}</td><td class="n">{{ s.pct | pct }}</td><td></td>
+        <td class="n">{{ s.gap | inr }}</td><td class="n">{{ s.exposure | inr }}</td></tr>
+      </tbody></table></div>
+    <div style="padding:14px 16px" class="note">
+      Project shortfalls and indicative exposure are summed without netting one project's
+      surplus against another. The aggregate registered share is context only.
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div style="padding:15px 16px 4px"><h3>Month by month</h3></div>
+    <div class="scroll"><table>
+      <thead><tr><th>Month</th><th>Label</th><th class="n">Eligible</th><th class="n">Registered</th>
+        <th class="n">Registered %</th><th>Status</th><th></th></tr></thead>
+      <tbody>{% for mo in y.months %}
+        <tr><td>{{ mo.run.period_month }}</td><td>{{ mo.run.label }}</td>
+          <td class="n">{{ mo.s.eligible | inr }}</td><td class="n">{{ mo.s.registered | inr }}</td>
+          <td class="n">{{ mo.s.pct | pct }}</td>
+          <td>{% if mo.run.status == 'frozen' %}<span class="pill p-ok">Frozen</span>
+              {% else %}<span class="pill p-mute">Draft</span>{% endif %}</td>
+          <td><a href="/gst8020/runs/{{ mo.run.id }}">Open</a></td></tr>
+      {% endfor %}</tbody></table></div>
+  </div>
+</section>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,35 @@
+{% macro gauge(s, cfg) %}
+{% set el = s.eligible or 1 %}
+<div class="gauge-wrap">
+  <div class="gauge">
+    <i class="g-reg" style="width: {{ (s.registered / el * 100) | round(4) }}%"></i>
+    <i class="g-unreg" style="width: {{ (s.unregistered / el * 100) | round(4) }}%"></i>
+  </div>
+  <span class="floor-mark" style="left: {{ cfg.threshold_pct }}%"><span>{{ cfg.threshold_pct | round(0) | int }}% floor</span></span>
+</div>
+<div class="legend">
+  <span><i class="sw" style="background:var(--accent)"></i>Registered</span>
+  <span><i class="sw" style="background:var(--line)"></i>Unregistered</span>
+</div>
+{% endmacro %}
+
+{% macro verdict(s, cfg) %}
+{% if s.below_projects %}
+  <div class="verdict fail">{{ s.below_projects }} project{{ '' if s.below_projects == 1 else 's' }} below the {{ cfg.threshold_pct | round(0) | int }}% floor</div>
+{% elif s.pct >= cfg.threshold_pct %}
+  <div class="verdict pass">Every included project is above the {{ cfg.threshold_pct | round(0) | int }}% floor</div>
+{% else %}
+  <div class="verdict fail">Aggregate share below the {{ cfg.threshold_pct | round(0) | int }}% floor</div>
+{% endif %}
+{% endmacro %}
+
+{% macro status_pill(v) %}
+{% if v.startswith('Registered') %}<span class="pill p-ok">{{ v }}</span>
+{% elif v == 'Needs Rectification' %}<span class="pill p-warn">{{ v }}</span>
+{% else %}<span class="pill p-mute">{{ v }}</span>{% endif %}
+{% endmacro %}
+
+{% macro elig_pill(v) %}
+{% if v == 'Eligible' %}<span class="pill p-accent">Eligible</span>
+{% else %}<span class="pill p-bad">Ineligible</span>{% endif %}
+{% endmacro %}

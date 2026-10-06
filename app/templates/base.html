@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{{ PORTAL_NAME }}{% endblock %} · {{ ORG_NAME }}</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='5' fill='%2324457a'/><text x='16' y='22' font-size='15' font-family='monospace' fill='white' text-anchor='middle'>₹</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="inner">
+    <a class="brand" href="/"><span class="mark">FO</span>
+      <span>{{ ORG_NAME }}<small>{{ PORTAL_NAME }}</small></span></a>
+    <nav class="modules">
+      <a href="/" {% if not module %}class="on"{% endif %}>All solutions</a>
+      {% for s in solutions if s.status == 'live' %}
+        <a href="{{ s.url }}" {% if module == s.slug %}class="on"{% endif %}>{{ s.name }}</a>
+      {% endfor %}
+      {% if user and user.is_admin %}<a href="/admin/users" {% if module == 'admin' %}class="on"{% endif %}>Administration</a>{% endif %}
+      {% if user and user.is_admin %}<a href="/admin/license">Licence</a>{% endif %}
+    </nav>
+    {% if user %}
+    <div class="who">
+      <span>{{ user.name }} · {{ user.role }}</span>
+      <button class="small" id="theme" type="button">Theme</button>
+      <a class="btn small" href="/logout">Sign out</a>
+    </div>
+    {% endif %}
+  </div>
+</header>
+{% if request.state.license is defined and request.state.license.read_only %}
+<div class="wrap" style="padding-top:12px"><div class="callout err">
+  {{ request.state.license.message }} Existing results remain viewable and exportable.
+  {% if user and user.is_admin %}<a href="/admin/license">Licence details</a>{% endif %}
+</div></div>
+{% endif %}
+{% block subnav %}{% endblock %}
+<main class="wrap">{% block content %}{% endblock %}</main>
+<script>
+(function () {
+  var root = document.documentElement;
+  try { var t = localStorage.getItem("finops-theme"); if (t) root.setAttribute("data-theme", t); } catch (e) {}
+  var b = document.getElementById("theme");
+  if (b) b.addEventListener("click", function () {
+    var cur = root.getAttribute("data-theme");
+    var sysDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var next = cur ? (cur === "dark" ? "light" : "dark") : (sysDark ? "light" : "dark");
+    root.setAttribute("data-theme", next);
+    try { localStorage.setItem("finops-theme", next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>

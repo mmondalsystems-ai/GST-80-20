@@ -1,0 +1,75 @@
+{% extends "base.html" %}{% set nav = 'creditors' %}
+{% block title %}Creditors &amp; GSTIN{% endblock %}
+{% block subnav %}{% include "_gst_nav.html" %}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Creditors &amp; GSTIN master</h1>
+    <p class="sub">Corrections saved here remain available for follow-up. Each new calculation
+      uses its uploaded Creditors export exactly as the golden script does, so carry confirmed
+      GSTINs into that export before running the next month.</p></div>
+  <div class="actions">
+    <a class="btn" href="/gst8020/creditors/missing-gstin.xlsx">Download fill-in sheet</a>
+  </div>
+</div>
+
+{% if flash %}<div class="callout ok" style="margin-bottom:16px">{{ flash }}</div>{% endif %}
+
+<section><div class="tiles">
+  <div class="tile"><div class="k">On file</div><div class="v">{{ counts.all }}</div></div>
+  <div class="tile {% if counts.missing %}alert{% endif %}"><div class="k">No GSTIN</div>
+    <div class="v">{{ counts.missing }}</div>
+    <div class="n">Some are genuinely unregistered — the rest are master-data gaps</div></div>
+  <div class="tile {% if counts.invalid %}alert{% endif %}"><div class="k">Invalid GSTIN</div>
+    <div class="v">{{ counts.invalid }}</div>
+    <div class="n">Fails structure, checksum or PAN cross-check</div></div>
+</div></section>
+
+{% if user.can_edit %}
+<section><div class="card pad">
+  <h3>Import a completed fill-in sheet</h3>
+  <p class="note">Download the sheet above, have the team complete the GSTIN column, then upload it
+    back. Every value is validated on the way in; anything that fails is reported and not saved.</p>
+  <form method="post" action="/gst8020/creditors/import-gstin" enctype="multipart/form-data"
+        style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap">
+    <input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}">
+    <input type="file" name="sheet" accept=".xlsx" required style="width:auto">
+    <button class="primary" type="submit">Import</button>
+  </form>
+</div></section>
+{% endif %}
+
+<form class="toolbar" method="get" action="/gst8020/creditors">
+  <input type="search" name="q" value="{{ q }}" placeholder="Supplier name…">
+  <select name="show">
+    <option value="missing" {% if show == 'missing' %}selected{% endif %}>Missing GSTIN</option>
+    <option value="invalid" {% if show == 'invalid' %}selected{% endif %}>Invalid GSTIN</option>
+    <option value="all" {% if show == 'all' %}selected{% endif %}>Everyone</option>
+  </select>
+  <button type="submit">Apply</button>
+</form>
+
+<div class="card scroll">
+{% if items %}
+<table>
+  <thead><tr><th>Supplier</th><th>Group</th><th>PAN</th><th>GSTIN</th><th>Check</th>
+    {% if user.can_edit %}<th>Set GSTIN</th>{% endif %}</tr></thead>
+  <tbody>{% for c in items %}
+    <tr><td>{{ c.account_name }}</td><td class="note">{{ c.group_name }}</td>
+      <td class="mono">{{ c.pan }}</td><td class="mono">{{ c.gstin }}</td>
+      <td>{% if not c.gstin %}<span class="pill p-mute">none</span>
+          {% elif c.gstin_valid == 'ok' %}<span class="pill p-ok">valid</span>
+          {% else %}<span class="pill p-bad">{{ c.gstin_valid.replace('_', ' ') }}</span>{% endif %}</td>
+      {% if user.can_edit %}
+      <td><form method="post" action="/gst8020/creditors/{{ c.id }}"
+                style="display:flex;gap:6px">
+            <input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}">
+            <input type="text" name="gstin" value="{{ c.gstin }}" maxlength="15"
+                   style="width:170px" placeholder="15 characters">
+            <button class="small" type="submit">Save</button></form></td>
+      {% endif %}
+    </tr>{% endfor %}</tbody>
+</table>
+{% else %}<div class="empty">No suppliers match.</div>{% endif %}
+</div>
+<p class="note" style="margin-top:12px">Showing at most 400 suppliers — narrow with the search box.</p>
+{% endblock %}

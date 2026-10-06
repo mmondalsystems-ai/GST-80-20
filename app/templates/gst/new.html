@@ -1,0 +1,64 @@
+{% extends "base.html" %}{% set nav = 'new' %}
+{% block title %}New calculation{% endblock %}
+{% block subnav %}{% include "_gst_nav.html" %}{% endblock %}
+{% block content %}
+<div class="page-head"><div>
+  <h1>New calculation</h1>
+  <p class="sub">Upload the month's Tally exports. An earlier draft is retained and superseded;
+    a frozen month cannot be replaced.</p></div></div>
+
+{% if error %}<div class="callout err" style="margin-bottom:18px">{{ error }}</div>{% endif %}
+
+<form method="post" action="/gst8020/new" enctype="multipart/form-data">
+  <input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}">
+  <div class="grid g2">
+    <div class="card pad">
+      <h3>Source files</h3>
+      <div class="upload-field">
+        <div class="input-callout-tag">Required input 1</div>
+        <label class="field"><span class="input-file-title">Day Book Register</span>
+          <input type="file" name="daybook" accept=".xlsx" required>
+          <span class="help">Use the full Tally .xlsx export, including Debit, Credit,
+            Parent_Group_Name and Cost_Centre.</span></label>
+        <a class="template-link" href="/static/input-templates/Day_Book_Register_Template.xlsx" download>Download Day Book template</a>
+      </div>
+      <div class="upload-field">
+        <div class="input-callout-tag">Required input 2</div>
+        <label class="field"><span class="input-file-title">Search Voucher</span>
+          <input type="file" name="voucher" accept=".xlsx" required>
+          <span class="help">Use the full .xlsx export with Status and amount columns.
+            Every reportable voucher must have Approved matching rows.</span></label>
+        <a class="template-link" href="/static/input-templates/Search_Voucher_Template.xlsx" download>Download Search Voucher template</a>
+      </div>
+      <div class="upload-field">
+        <div class="input-callout-tag">Required input 3</div>
+        <label class="field"><span class="input-file-title">Creditors Details</span>
+          <input type="file" name="creditors" accept=".xlsx" required>
+          <span class="help">The calculation reads this export directly, matching the approved Python script.
+            It also refreshes the shared GSTIN master for follow-up work.</span></label>
+        <a class="template-link" href="/static/input-templates/Creditors_Details_Template.xlsx" download>Download Creditors Details template</a>
+      </div>
+      <label class="field"><span>Label</span>
+        <input type="text" name="label" placeholder="e.g. July 2026 — first pass">
+        <span class="help">Optional. Defaults to the month found in the Day Book.</span></label>
+      <button class="primary" type="submit">Run the calculation</button>
+    </div>
+
+    <div class="card pad">
+      <h3>Masters this run will use</h3>
+      <p class="note">Change these on the <a href="/gst8020/masters">Masters</a> page before running
+        if this month needs different treatment.</p>
+      <table style="margin-top:12px">
+        <tbody>
+        <tr><td>Included Fixed Group Names</td><td class="mono">{{ cfg.include_fixed_groups | join(', ') if cfg.include_fixed_groups else 'Dynamic golden default' }}</td></tr>
+        <tr><td>Excluded Parent Group Names</td><td class="mono">{{ cfg.exclude_parent_groups | join(', ') }}</td></tr>
+        <tr><td>Ineligible keywords</td><td class="mono">{{ cfg.ineligible_keywords | length }} terms</td></tr>
+        <tr><td>Threshold</td><td class="mono">{{ cfg.threshold_pct }}%</td></tr>
+        <tr><td>Shortfall tax rate</td><td class="mono">{{ cfg.shortfall_tax_rate }}%</td></tr>
+        <tr><td>Calculation authority</td><td class="mono">Approved 80-20.py</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</form>
+{% endblock %}

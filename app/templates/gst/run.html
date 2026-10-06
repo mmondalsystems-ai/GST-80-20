@@ -1,0 +1,113 @@
+{% extends "base.html" %}{% import "_macros.html" as m %}{% set nav = 'overview' %}
+{% block title %}{{ run.period_month }}{% endblock %}
+{% block subnav %}{% include "_gst_nav.html" %}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow">{{ run.financial_year }} · {{ run.period_month }}</div>
+    <h1>{{ run.label }}</h1>
+    <p class="sub">Run by {{ run.created_by.name }} on {{ run.created_at | stamp }} ·
+      {% if run.status == 'frozen' %}<span class="pill p-ok">Frozen {{ run.frozen_at | stamp }}</span>
+      {% elif run.status == 'superseded' %}<span class="pill p-warn">Superseded by a later run</span>
+      {% else %}<span class="pill p-mute">Draft</span>{% endif %}</p></div>
+  <div class="actions">
+    <a class="btn" href="/gst8020/runs/{{ run.id }}/rows">All {{ stats.rows }} rows</a>
+    <a class="btn" href="/gst8020/runs/{{ run.id }}/export.xlsx">Export workbook</a>
+    {% if user.can_edit and run.status == 'draft' %}
+      <form method="post" action="/gst8020/runs/{{ run.id }}/freeze" style="display:inline"
+            onsubmit="return confirm('Freeze this month permanently? No calculation or review decision can be changed afterwards.')">
+        <input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}">
+        <button class="primary" type="submit">Freeze month</button></form>
+    {% endif %}
+  </div>
+</div>
+{% if backup_notice %}
+<div class="callout {% if 'FAILED' in backup_notice %}err{% endif %}" style="margin-bottom:18px">{{ backup_notice }}</div>
+{% endif %}
+
+<section>
+  <div class="card hero">
+    <div>
+      <div class="eyebrow">Approved Python Report: eligible registered share</div>
+      <div class="bignum">{{ stats.pct | pct }}</div>
+      {{ m.verdict(stats, cfg) }}
+      {{ m.gauge(stats, cfg) }}
+    </div>
+    <div class="stats">
+      <div class="stat big"><span>Eligible spend</span><b>{{ stats.eligible | inr }}</b></div>
+      <div class="stat"><span>Registered</span><b>{{ stats.registered | inr }}</b></div>
+      <div class="stat"><span>Open review items</span><b>{{ open_rect }}</b></div>
+      <div class="stat"><span>Unregistered</span><b>{{ stats.unregistered | inr }}</b></div>
+      <div class="stat"><span>Ineligible spend</span><b>{{ stats.ineligible | inr }}</b></div>
+      <div class="stat {% if stats.gap %}bad{% endif %}"><span>Project-wise indicative exposure</span><b>{{ stats.exposure | inr }}</b></div>
+    </div>
+  </div>
+</section>
+
+{% if open_rect %}
+<div class="callout warn" style="margin-bottom:22px">
+  <strong>{{ open_rect }} voucher(s) are waiting on an accounts decision.</strong>
+  The golden calculation has already classified these rows as Registered or Unregistered.
+  Review decisions annotate this snapshot; corrected source exports require a new draft run.
+  <a href="/gst8020/rectifications?run_id={{ run.id }}">Work the queue</a>.
+</div>
+{% endif %}
+
+<section>
+  <div class="grid g2">
+    <div class="card">
+      <div style="padding:15px 16px 4px"><h3>By project — supplementary indicator</h3></div>
+      <div class="scroll"><table>
+        <thead><tr><th>Project</th><th class="n">Eligible</th><th class="n">Registered %</th>
+          <th style="width:110px"></th><th class="n">Exposure</th></tr></thead>
+        <tbody>{% for p, v in projects.items() %}
+          <tr><td><a href="/gst8020/runs/{{ run.id }}/rows?project={{ p | urlencode }}">{{ p }}</a></td>
+            <td class="n">{{ v.eligible | lakh }}</td><td class="n">{{ v.pct | pct }}</td>
+            <td><div class="bar {% if v.pct >= cfg.threshold_pct %}ok{% else %}bad{% endif %}">
+              <i style="width:{{ [v.pct, 100] | min | round(2) }}%"></i></div></td>
+            <td class="n" {% if v.gap %}style="color:var(--bad)"{% endif %}>{{ v.exposure | lakh }}</td></tr>
+        {% endfor %}</tbody></table></div>
+    </div>
+
+    <div class="card">
+      <div style="padding:15px 16px 4px"><h3>Where to look next</h3></div>
+      <table><tbody>
+        <tr><td><a href="/gst8020/runs/{{ run.id }}/vendors">Unregistered suppliers</a></td>
+          <td class="note">Ranked by spend, with spelling variants grouped — the shortest route
+            to moving the percentage.</td></tr>
+        <tr><td><a href="/gst8020/runs/{{ run.id }}/exceptions">Data quality exceptions</a></td>
+          <td class="note">Credit-side reallocations, invalid GSTINs and differences between
+            the sender's email and approved Python rules.</td></tr>
+        <tr><td><a href="/gst8020/rectifications?run_id={{ run.id }}">Rectification queue</a></td>
+          <td class="note">Vouchers where the GSTIN and the GST ledger disagree.</td></tr>
+        <tr><td><a href="/gst8020/runs/{{ run.id }}/rows?flagged=1">Flagged rows</a></td>
+          <td class="note">Golden review items plus separate application diagnostics;
+            neither changes the source classification.</td></tr>
+      </tbody></table>
+      <div style="padding:14px 16px" class="note">
+        Source files: {% for k, v in files.items() %}<span class="mono">{{ v }}</span>{% if not loop.last %} · {% endif %}{% endfor %}
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="card">
+    <div style="padding:15px 16px 4px"><h3>Summary</h3></div>
+    <div class="scroll"><table>
+      <thead><tr><th>Head</th><th>80-20</th><th>GST Status</th><th class="n">Sum of Closing</th></tr></thead>
+      <tbody>
+      {% for r in table %}
+        <tr {% if r.total %}class="tot"{% endif %}>
+          <td>{{ r.head }}</td>
+          {% if r.total %}<td colspan="2">{{ r.status }}</td>
+          {% else %}<td>{{ m.elig_pill(r.elig) }}</td><td>{{ m.status_pill(r.status) }}</td>{% endif %}
+          <td class="n">{{ r.amount | inr }}</td></tr>
+      {% endfor %}
+      </tbody></table></div>
+    <div style="padding:14px 16px" class="note">
+      Review items remain in their Python-calculated Registered or Unregistered bucket.
+      The percentage above follows the approved Report sheet's eligible-only absolute-value formula.
+    </div>
+  </div>
+</section>
+{% endblock %}
