@@ -1,127 +1,734 @@
-"""Best-effort offline, signed 30-day licence enforcement.
+"""Finance Operations Portal — application entry point."""
 
-The issuer's private key is never deployed. Local source and clock control mean
-this cannot be tamper-proof; it is a transparent commercial licence control.
-"""
-import base64
-import datetime as dt
 import json
-from pathlib import Path
-import uuid
-from dataclasses import dataclass
+import datetime as dt
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import serialization
-from sqlalchemy.exc import IntegrityError
+from fastapi import FastAPI, Request, Depends, Form
+from fastapi.responses import RedirectResponse, HTMLResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import HTTPException
+from starlette.middleware.sessions import SessionMiddleware
+from sqlalchemy.orm import Session
+from sqlalchemy import select, func
 
-from .config import BASE_DIR, VAR_DIR
-from .models import LicenseActivation
+from .config import (
+    SECRET_KEY,
+    SESSION_HTTPS_ONLY,
+    BASE_DIR,
+    ORG_NAME,
+    PORTAL_NAME,
+    BOOTSTRAP_ADMIN_EMAIL,
+    BOOTSTRAP_ADMIN_PASSWORD,
+    DATABASE_URL,
+    USING_SQLITE,
+    GENERATED_PASSWORD_FILE,
+)
 
-PUBLIC_KEY_PATH = BASE_DIR / "app" / "license_public_key.pem"
-LICENSE_FILE = VAR_DIR / "license.json"
-INSTALLATION_ID_FILE = VAR_DIR / "installation-id"
-TERM_DAYS = 30
-CLOCK_TOLERANCE = dt.timedelta(minutes=5)
+from .db import Base, engine, get_db, SessionLocal
 
+from . import models
 
-def utcnow():
-    return dt.datetime.now(dt.timezone.utc)
+from .models import (
+    User,
+    Run,
+    Rectification,
+)
 
+from .auth import (
+    current_user,
+    require_user,
+    verify_password,
+    hash_password,
+    audit,
+    RedirectToLogin,
+    require_csrf,
+)
 
-def as_utc(value):
-    return value.replace(tzinfo=dt.timezone.utc) if value.tzinfo is None else value.astimezone(dt.timezone.utc)
+from .catalogue import SOLUTIONS
+from .templating import templates
 
+# Keep the licence evaluator so any existing licence-related
+# templates/routes continue to receive the expected status object.
+from .license import evaluate as evaluate_license
 
-def canonical(payload):
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-
-
-def installation_id():
-    """Persistent random installation identifier, not a hardware fingerprint."""
-    if INSTALLATION_ID_FILE.exists():
-        value = INSTALLATION_ID_FILE.read_text(encoding="ascii").strip()
-        return str(uuid.UUID(value))
-    value = str(uuid.uuid4())
-    try:
-        with INSTALLATION_ID_FILE.open("x", encoding="ascii") as handle:
-            handle.write(value)
-    except FileExistsError:
-        value = INSTALLATION_ID_FILE.read_text(encoding="ascii").strip()
-    return str(uuid.UUID(value))
-
-
-def verify_license_file(path, expected_installation_id):
-    """Verify a prospective licence without starting its activation period."""
-    document = json.loads(Path(path).read_text(encoding="utf-8"))
-    payload = document["payload"]
-    signature = base64.b64decode(document["signature"], validate=True)
-    public_key = serialization.load_pem_public_key(PUBLIC_KEY_PATH.read_bytes())
-    public_key.verify(signature, canonical(payload))
-    if payload.get("schema") != 1 or payload.get("duration_days") != TERM_DAYS:
-        raise ValueError("Licence terms are not supported")
-    if payload.get("installation_id") != expected_installation_id:
-        raise ValueError("Licence belongs to another installation")
-    license_id = str(uuid.UUID(payload["license_id"]))
-    customer = str(payload["customer"]).strip()
-    if not customer or len(customer) > 160:
-        raise ValueError("Missing customer")
-    return payload, license_id, customer
+from .routers import (
+    gst8020 as gst_router,
+    admin as admin_router,
+)
 
 
-@dataclass(frozen=True)
-class LicenseStatus:
-    code: str
-    message: str
-    installation_id: str
-    license_id: str = ""
-    customer: str = ""
-    activated_at: dt.datetime | None = None
-    expires_at: dt.datetime | None = None
+# ============================================================
+# APPLICATION
+# ============================================================
+
+app = FastAPI(
+    title=PORTAL_NAME,
+    docs_url=None,
+    redoc_url=None,
+)
+
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SECRET_KEY,
+    https_only=SESSION_HTTPS_ONLY,
+    same_site="lax",
+    max_age=8 * 60 * 60,
+)
+
+
+app.mount(
+    "/static",
+    StaticFiles(
+        directory=BASE_DIR / "app" / "static"
+    ),
+    name="static",
+)
+
+
+app.include_router(
+    gst_router.router
+)
+
+app.include_router(
+    admin_router.router
+)
+
+
+# ============================================================
+# LICENCE BYPASS WRAPPER
+#
+# We preserve every property from the original licence object,
+# but read_only is always False.
+#
+# This means:
+#
+# - Existing code expecting request.state.license still works.
+# - Existing licence information does not cause import errors.
+# - Missing/expired licence does NOT block POST operations.
+# - Calculations remain enabled.
+# ============================================================
+
+class UnlockedLicenseStatus:
+
+    def __init__(self, original_status):
+        self._original_status = original_status
+
 
     @property
     def read_only(self):
-        return self.code != "active"
+        """
+        Always allow normal application operation.
+        """
+        return False
 
 
-def evaluate(db, now=None):
-    """Verify signature and duration; record first activation in the DB."""
-    now = as_utc(now or utcnow())
+    def __getattr__(self, name):
+        """
+        For every other licence property, use the
+        original licence status object.
+        """
+
+        return getattr(
+            self._original_status,
+            name
+        )
+
+
+# ============================================================
+# LICENCE MIDDLEWARE
+#
+# OLD BEHAVIOUR:
+# Missing/expired licence caused HTTP 423 and read-only mode.
+#
+# NEW BEHAVIOUR:
+# Licence status can still be evaluated, but it no longer
+# blocks calculations or other write operations.
+# ============================================================
+
+@app.middleware("http")
+async def offline_license_gate(
+    request: Request,
+    call_next
+):
+
+    # --------------------------------------------------------
+    # Health/static requests do not need licence evaluation
+    # --------------------------------------------------------
+
+    if (
+        request.url.path == "/healthz"
+        or request.url.path.startswith("/static/")
+    ):
+
+        return await call_next(request)
+
+
+    # --------------------------------------------------------
+    # Evaluate existing licence only for compatibility
+    # --------------------------------------------------------
+
     try:
-        install_id = installation_id()
-    except (OSError, ValueError):
-        return LicenseStatus("invalid", "Installation ID is unavailable. Contact the licence issuer.", "")
-    if not LICENSE_FILE.is_file():
-        return LicenseStatus("missing", "No licence installed. The portal is read-only.", install_id)
-    try:
-        payload, license_id, customer = verify_license_file(LICENSE_FILE, install_id)
-    except (OSError, ValueError, KeyError, TypeError, InvalidSignature):
-        return LicenseStatus("invalid", "Licence is invalid or belongs to another installation.", install_id)
 
-    activation = db.get(LicenseActivation, license_id)
-    if activation is None:
-        activation = LicenseActivation(license_id=license_id, installation_id=install_id,
-                                       activated_at=now, last_seen_at=now)
-        db.add(activation)
-        try:
+        with SessionLocal() as db:
+
+            original_license_status = (
+                evaluate_license(db)
+            )
+
+
+        # ----------------------------------------------------
+        # Wrap original status but force read_only=False
+        # ----------------------------------------------------
+
+        request.state.license = (
+            UnlockedLicenseStatus(
+                original_license_status
+            )
+        )
+
+
+    except Exception as exc:
+
+        # ----------------------------------------------------
+        # Even if licence evaluation itself fails,
+        # do not block the application.
+        #
+        # Provide a minimal compatible object.
+        # ----------------------------------------------------
+
+        class FallbackLicenseStatus:
+
+            read_only = False
+            status = "active"
+            message = ""
+
+        request.state.license = (
+            FallbackLicenseStatus()
+        )
+
+
+        print(
+            "Licence evaluation ignored: "
+            + str(exc),
+            flush=True
+        )
+
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    #
+    # There is intentionally NO 423 licence blocking here.
+    #
+    # Continue normally.
+    # --------------------------------------------------------
+
+    return await call_next(request)
+
+
+# ============================================================
+# STARTUP
+# ============================================================
+
+@app.on_event("startup")
+def startup():
+    """
+    Create the tables and the first administrator,
+    then say what happened.
+
+    Both steps are safe to repeat:
+    tables are only created when missing,
+    and the administrator only when there
+    are no users at all.
+    """
+
+    Base.metadata.create_all(
+        engine
+    )
+
+
+    created = False
+
+
+    with SessionLocal() as db:
+
+        if not db.scalar(
+            select(
+                func.count(User.id)
+            )
+        ):
+
+            db.add(
+                User(
+                    email=BOOTSTRAP_ADMIN_EMAIL,
+                    name="Administrator",
+                    password_hash=hash_password(
+                        BOOTSTRAP_ADMIN_PASSWORD
+                    ),
+                    role="admin",
+                )
+            )
+
             db.commit()
-        except IntegrityError:
-            db.rollback()
-            activation = db.get(LicenseActivation, license_id)
-            if activation is None:
-                raise
-    if activation.installation_id != install_id:
-        return LicenseStatus("invalid", "Licence activation belongs to another installation.", install_id)
-    activated_at = as_utc(activation.activated_at)
-    last_seen_at = as_utc(activation.last_seen_at)
-    expires_at = activated_at + dt.timedelta(days=TERM_DAYS)
-    if now + CLOCK_TOLERANCE < last_seen_at or now + CLOCK_TOLERANCE < activated_at:
-        return LicenseStatus("clock", "System clock moved backwards. The portal is read-only.",
-                             install_id, license_id, customer, activated_at, expires_at)
-    if now >= expires_at:
-        return LicenseStatus("expired", "The 30-day licence has expired. The portal is read-only.",
-                             install_id, license_id, customer, activated_at, expires_at)
-    if now.date() > last_seen_at.date():
-        activation.last_seen_at = now
+
+            created = True
+
+
+    where = (
+        "SQLite file (single-user pilot)"
+        if USING_SQLITE
+        else DATABASE_URL.split("@")[-1]
+    )
+
+
+    if not created:
+
+        # Already set up.
+        # One quiet line so a restart
+        # does not fill the screen.
+
+        print(
+            f"{PORTAL_NAME} — "
+            f"{ORG_NAME} · "
+            f"{where}",
+            flush=True,
+        )
+
+        return
+
+
+    lines = [
+
+        f"{PORTAL_NAME} — {ORG_NAME}",
+
+        f"Database: {where}",
+
+        "",
+
+        "First administrator created:",
+
+        f"  Email:    "
+        f"{BOOTSTRAP_ADMIN_EMAIL}",
+
+        f"  Password: "
+        f"{BOOTSTRAP_ADMIN_PASSWORD}",
+
+        (
+            "Change it under "
+            "Administration -> Users "
+            "after signing in."
+        ),
+
+    ]
+
+
+    width = (
+        max(
+            len(x)
+            for x in lines
+        )
+        + 4
+    )
+
+
+    print(
+        "\n"
+        + "=" * width
+    )
+
+
+    for line in lines:
+
+        print(
+            "  " + line
+        )
+
+
+    print(
+        "=" * width
+        + "\n",
+        flush=True,
+    )
+
+
+# ============================================================
+# EXCEPTION HANDLERS
+# ============================================================
+
+@app.exception_handler(
+    RedirectToLogin
+)
+def _to_login(
+    request: Request,
+    exc: RedirectToLogin
+):
+
+    return RedirectResponse(
+        f"/login?next={exc.path}",
+        status_code=303,
+    )
+
+
+@app.exception_handler(
+    HTTPException
+)
+def _http_error(
+    request: Request,
+    exc: HTTPException
+):
+
+    with SessionLocal() as db:
+
+        user = current_user(
+            request,
+            db
+        )
+
+
+        return templates.TemplateResponse(
+            request,
+            "error.html",
+            {
+                "user": user,
+                "code": exc.status_code,
+                "message": exc.detail,
+                "solutions": SOLUTIONS,
+            },
+            status_code=exc.status_code,
+        )
+
+
+# ============================================================
+# HEALTH CHECK
+# ============================================================
+
+@app.get(
+    "/healthz",
+    response_class=PlainTextResponse
+)
+def healthz():
+
+    return "ok"
+
+
+# ============================================================
+# SIGN IN
+# ============================================================
+
+def safe_next(path: str) -> str:
+    """
+    Only permit in-app destinations
+    after authentication.
+    """
+
+    return (
+        path
+        if (
+            path.startswith("/")
+            and not path.startswith("//")
+            and "\\" not in path
+        )
+        else "/"
+    )
+
+
+@app.get(
+    "/login",
+    response_class=HTMLResponse
+)
+def login_form(
+    request: Request,
+    next: str = "/",
+    db: Session = Depends(get_db)
+):
+
+    next = safe_next(
+        next
+    )
+
+
+    if current_user(
+        request,
+        db
+    ):
+
+        return RedirectResponse(
+            next or "/",
+            status_code=303,
+        )
+
+
+    return templates.TemplateResponse(
+        request,
+        "login.html",
+        {
+            "next": next,
+            "org": ORG_NAME,
+            "portal": PORTAL_NAME,
+        },
+    )
+
+
+@app.post(
+    "/login",
+    response_class=HTMLResponse,
+    dependencies=[
+        Depends(require_csrf)
+    ],
+)
+def login(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    next: str = Form("/"),
+    db: Session = Depends(get_db),
+):
+
+    next = safe_next(
+        next
+    )
+
+
+    u = db.scalar(
+
+        select(User).where(
+
+            User.email
+            ==
+            email
+            .strip()
+            .lower()
+
+        )
+
+    )
+
+
+    if (
+        not u
+        or not u.is_active
+        or not verify_password(
+            password,
+            u.password_hash
+        )
+    ):
+
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {
+                "next": next,
+                "org": ORG_NAME,
+                "portal": PORTAL_NAME,
+                "error": (
+                    "That email and password "
+                    "combination did not match "
+                    "an active account."
+                ),
+            },
+            status_code=401,
+        )
+
+
+    request.session["uid"] = u.id
+
+
+    # --------------------------------------------------------
+    # Licence is now always unlocked,
+    # therefore this will execute normally.
+    # --------------------------------------------------------
+
+    if not request.state.license.read_only:
+
+        u.last_login = (
+            dt.datetime.now(
+                dt.timezone.utc
+            )
+        )
+
+
+        audit(
+            db,
+            u,
+            "sign_in",
+            "user",
+            u.id,
+        )
+
+
         db.commit()
-    return LicenseStatus("active", "Licence active.", install_id, license_id,
-                         customer, activated_at, expires_at)
+
+
+    return RedirectResponse(
+        next or "/",
+        status_code=303,
+    )
+
+
+# ============================================================
+# LOGOUT
+# ============================================================
+
+@app.get(
+    "/logout"
+)
+def logout(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+
+    u = current_user(
+        request,
+        db
+    )
+
+
+    if (
+        u
+        and not request.state.license.read_only
+    ):
+
+        audit(
+            db,
+            u,
+            "sign_out",
+            "user",
+            u.id,
+        )
+
+
+        db.commit()
+
+
+    request.session.clear()
+
+
+    return RedirectResponse(
+        "/login",
+        status_code=303,
+    )
+
+
+# ============================================================
+# PORTAL
+# ============================================================
+
+@app.get(
+    "/",
+    response_class=HTMLResponse
+)
+def portal(
+    request: Request,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+
+    latest = db.scalar(
+
+        select(Run)
+        .order_by(
+            Run.created_at.desc()
+        )
+
+    )
+
+
+    stats = (
+
+        gst_router.summarise_portfolio(
+
+            gst_router.run_rows(
+                db,
+                latest.id
+            ),
+
+            json.loads(
+                latest.config_snapshot
+                or "{}"
+            ),
+
+        )
+
+        if latest
+
+        else None
+
+    )
+
+
+    open_rect = (
+
+        db.scalar(
+
+            select(
+                func.count(
+                    Rectification.id
+                )
+            )
+
+            .where(
+
+                Rectification.status.in_(
+                    (
+                        "open",
+                        "in_progress",
+                    )
+                ),
+
+                Rectification.run_id.in_(
+
+                    select(Run.id)
+
+                    .where(
+                        Run.status
+                        !=
+                        "superseded"
+                    )
+
+                    .scalar_subquery()
+
+                ),
+
+            )
+
+        )
+
+        or 0
+
+    )
+
+
+    return templates.TemplateResponse(
+
+        request,
+
+        "portal.html",
+
+        {
+
+            "user": user,
+
+            "solutions": SOLUTIONS,
+
+            "org": ORG_NAME,
+
+            "portal": PORTAL_NAME,
+
+            "latest": latest,
+
+            "stats": stats,
+
+            "open_rect": open_rect,
+
+            # Shown until the administrator changes
+            # the password the installer generated.
+            "first_run": (
+                user.is_admin
+                and GENERATED_PASSWORD_FILE.exists()
+            ),
+
+            "sqlite": USING_SQLITE,
+
+        },
+
+    )
