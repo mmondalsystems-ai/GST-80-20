@@ -1,0 +1,25 @@
+{% extends "base.html" %}{% set nav = 'overrides' %}
+{% block title %}Ledger corrections{% endblock %}
+{% block subnav %}{% include "_gst_nav.html" %}{% endblock %}
+{% block content %}
+<div class="page-head"><div>
+  <h1>Archived ledger corrections</h1>
+  <p class="sub">These historical settings are retained for audit only. They no longer affect
+    new runs. The supplied 80-20.py controls party resolution.</p></div></div>
+
+<div class="card scroll">
+{% if items %}
+<table>
+  <thead><tr><th>Resolved name</th><th>Shown as</th><th>Treated as</th><th>Why</th>
+    <th>Last changed</th></tr></thead>
+  <tbody>{% for o in items %}
+    <tr><td class="mono">{{ o.raw_key }}</td><td>{{ o.corrected_ledger }}</td>
+      <td>{% if o.party_kind == 'Settlement' %}<span class="pill p-mute">Settlement</span>
+          {% else %}<span class="pill p-accent">Vendor</span>{% endif %}</td>
+      <td class="note">{{ o.note }}</td>
+      <td class="note">{{ o.updated_at | stamp }}{% if o.updated_by %} · {{ o.updated_by.name }}{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+</table>
+{% else %}<div class="empty">No corrections yet.</div>{% endif %}
+</div>
+{% endblock %}

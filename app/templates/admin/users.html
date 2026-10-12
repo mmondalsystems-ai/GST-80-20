@@ -1,0 +1,60 @@
+{% extends "base.html" %}{% block title %}Users{% endblock %}
+{% block subnav %}
+<div class="subnav"><div class="inner">
+  <a href="/admin/users" class="on">Users</a>
+  <a href="/admin/audit">Audit trail</a>
+</div></div>
+{% endblock %}
+{% block content %}
+<div class="page-head"><div>
+  <h1>Users and access</h1>
+  <p class="sub">Roles decide what a person can do across every module in the portal.</p></div></div>
+
+{% if flash %}<div class="callout {{ 'warn' if 'already' in flash or 'least' in flash else 'ok' }}" style="margin-bottom:16px">{{ flash }}</div>{% endif %}
+
+<section><div class="card pad">
+  <h3>Add someone</h3>
+  <form method="post" action="/admin/users" class="grid g3" style="align-items:end">
+    <input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}">
+    <label class="field"><span>Name</span><input type="text" name="name" required></label>
+    <label class="field"><span>Email</span><input type="email" name="email" required></label>
+    <label class="field"><span>Temporary password</span>
+      <input type="password" name="password" required minlength="10" autocomplete="new-password">
+      <span class="help">At least 10 characters. Ask them to change it after signing in.</span></label>
+    <label class="field"><span>Role</span>
+      <select name="role">{% for k, v in roles.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
+    <div><button class="primary" type="submit">Create account</button></div>
+  </form>
+</div></section>
+
+<div class="card scroll">
+<table>
+  <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Last sign-in</th><th>Active</th><th>Update</th></tr></thead>
+  <tbody>{% for u in users %}
+  <tr>
+    <td>{{ u.name }}{% if u.id == user.id %} <span class="pill p-accent">you</span>{% endif %}</td>
+    <td class="mono">{{ u.email }}</td>
+    <td>{{ u.role }}</td>
+    <td class="note">{{ u.last_login | stamp or 'never' }}</td>
+    <td>{% if u.is_active %}<span class="pill p-ok">active</span>
+        {% else %}<span class="pill p-mute">disabled</span>{% endif %}</td>
+    <td><form method="post" action="/admin/users/{{ u.id }}"
+              style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}">
+          <select name="role" style="width:auto">{% for k in roles %}
+            <option value="{{ k }}" {% if u.role == k %}selected{% endif %}>{{ k }}</option>{% endfor %}</select>
+          <label class="inline" style="margin:0"><input type="checkbox" name="active" value="1" {% if u.is_active %}checked{% endif %}> active</label>
+          <input type="password" name="password" placeholder="new password" style="width:150px" autocomplete="new-password">
+          <button class="small" type="submit">Save</button>
+        </form></td>
+  </tr>{% endfor %}</tbody>
+</table>
+</div>
+
+<section style="margin-top:20px"><div class="card pad">
+  <h3>What each role can do</h3>
+  <table><tbody>{% for k, v in roles.items() %}
+    <tr><td style="width:120px"><strong>{{ k }}</strong></td><td class="note">{{ v }}</td></tr>
+  {% endfor %}</tbody></table>
+</div></section>
+{% endblock %}

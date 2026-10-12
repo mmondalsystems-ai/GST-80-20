@@ -1,0 +1,37 @@
+{% extends "base.html" %}{% set nav = 'overview' %}
+{% block title %}Exceptions · {{ run.period_month }}{% endblock %}
+{% block subnav %}{% include "_gst_nav.html" %}{% endblock %}
+{% block content %}
+<div class="page-head"><div>
+  <div class="eyebrow"><a href="/gst8020/runs/{{ run.id }}">{{ run.label }}</a></div>
+  <h1>Data quality exceptions</h1>
+  <p class="sub">Rows the calculation could complete but a person should look at. Nothing here is
+    excluded from the figures — it is surfaced so the figures can be trusted.</p></div></div>
+
+{% if not groups %}<div class="card"><div class="empty">No exceptions in this run.</div></div>{% endif %}
+
+{% for code, rows in groups %}
+{% set label = labels.get(code, (code, '')) %}
+<details class="box" style="margin-bottom:12px" {% if loop.first %}open{% endif %}>
+  <summary>
+    <span><strong>{{ label[0] }}</strong>
+      <span class="note" style="margin-left:10px">{{ rows | length }} row(s) ·
+        {{ rows | sum(attribute='closing') | inr }}</span></span>
+  </summary>
+  <div class="body">
+    <p class="note">{{ label[1] }}</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Voucher</th><th>Account name</th><th>Account ledger</th><th>GST No.</th>
+        <th class="n">Closing</th><th>Source narration</th></tr></thead>
+      <tbody>{% for r in rows[:120] %}
+        <tr><td class="mono">{{ r.voucher_id }}</td><td>{{ r.account_name }}</td>
+          <td>{{ r.ledger }}</td><td class="mono">{{ r.gstin }}</td>
+          <td class="n">{{ r.closing | inr }}</td><td class="wide note">{{ r.narration[:160] }}</td></tr>
+      {% endfor %}</tbody></table></div>
+    {% if rows | length > 120 %}
+      <p class="note" style="margin-top:10px">Showing the first 120 — the full list is in the
+        Data Quality sheet of the exported workbook.</p>{% endif %}
+  </div>
+</details>
+{% endfor %}
+{% endblock %}

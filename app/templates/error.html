@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% block title %}{{ code }}{% endblock %}
+{% block content %}
+<div class="card pad" style="max-width:640px">
+  <div class="eyebrow">Error {{ code }}</div>
+  <h1>{% if code == 423 %}Licence read-only{% elif code == 403 %}You do not have access to this{% elif code == 404 %}Not found{% else %}Something went wrong{% endif %}</h1>
+  <p class="sub" style="margin-top:12px">{{ message }}</p>
+  <div class="actions" style="margin-top:18px"><a class="btn" href="/">Back to all solutions</a></div>
+</div>
+{% endblock %}

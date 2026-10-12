@@ -1,0 +1,78 @@
+{% extends "base.html" %}{% import "_macros.html" as m %}{% set nav = 'overview' %}
+{% block title %}Rows · {{ run.period_month }}{% endblock %}
+{% block subnav %}{% include "_gst_nav.html" %}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow"><a href="/gst8020/runs/{{ run.id }}">{{ run.label }}</a></div>
+    <h1>80-20 table</h1>
+    <p class="sub">{{ total }} row{{ '' if total == 1 else 's' }} match the filters below.</p></div>
+  <div class="actions"><a class="btn" href="/gst8020/runs/{{ run.id }}/export.xlsx">Export workbook</a></div>
+</div>
+
+<form class="toolbar" method="get" action="/gst8020/runs/{{ run.id }}/rows">
+  <input type="search" name="q" value="{{ q }}" placeholder="Party, ledger, voucher, bill, narration…">
+  <select name="status">
+    <option value="">Any GST status</option>
+    {% for s in ['Registered', 'Unregistered'] %}
+      <option value="{{ s }}" {% if status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+  </select>
+  <select name="elig"><option value="">Eligible and ineligible</option>
+    <option value="Eligible" {% if elig == 'Eligible' %}selected{% endif %}>Eligible</option>
+    <option value="Ineligible" {% if elig == 'Ineligible' %}selected{% endif %}>Ineligible</option></select>
+  <select name="project"><option value="">All projects</option>
+    {% for p in projects %}<option value="{{ p }}" {% if project == p %}selected{% endif %}>{{ p or '(no cost centre)' }}</option>{% endfor %}</select>
+  <label class="inline"><input type="checkbox" name="flagged" value="1" {% if flagged %}checked{% endif %}> Flagged only</label>
+  <button type="submit">Apply</button>
+  <a class="btn" href="/gst8020/runs/{{ run.id }}/rows">Clear</a>
+</form>
+
+<div class="card scroll">
+{% if rows %}
+<table>
+  <thead><tr>
+    <th>Voucher</th><th>Date</th><th>Bill</th><th>Project</th><th>Account head</th>
+    <th>Account name</th><th>Account ledger</th><th>GST No.</th>
+    <th class="n">Debit</th><th class="n">Credit</th><th class="n">Closing</th>
+    <th>Key</th><th>80-20</th><th>GST status</th><th>Source narration</th><th>Flags</th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr>
+    <td class="mono">{{ r.voucher_type }} {{ r.voucher_no }}{% if r.rcm %}<br><span class="pill p-accent">RCM</span>{% endif %}</td>
+    <td class="mono">{{ r.voucher_date | dmy }}</td>
+    <td class="mono">{{ r.bill_no }}</td>
+    <td>{{ r.project }}</td>
+    <td>{{ r.account_head }}</td>
+    <td>{{ r.account_name }}</td>
+    <td>{{ r.ledger }}
+      {% if r.party_kind != 'Vendor' %}<br><span class="note">settlement</span>{% endif %}
+      </td>
+    <td class="mono">{{ r.gstin }}</td>
+    <td class="n">{{ r.debit | inr }}</td>
+    <td class="n">{{ r.credit | inr }}</td>
+    <td class="n">{{ r.closing | inr }}</td>
+    <td class="mono">{{ r.formula_key }}</td>
+    <td>{{ m.elig_pill(r.eligibility) }}</td>
+    <td>{{ m.status_pill(r.gst_status) }}</td>
+    <td class="wide note">{{ r.narration[:160] }}</td>
+    <td class="note">{{ r.flags.replace(',', ', ') }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">No rows match those filters.</div>
+{% endif %}
+</div>
+
+{% if pages > 1 %}
+{% set qs = 'q=' ~ q|urlencode ~ '&status=' ~ status|urlencode ~ '&elig=' ~ elig|urlencode ~ '&project=' ~ project|urlencode ~ '&flagged=' ~ flagged %}
+<div class="pager">
+  <span>Page {{ page }} of {{ pages }} · showing {{ rows | length }} of {{ total }}</span>
+  <span>
+    {% if page > 1 %}<a class="btn small" href="?{{ qs }}&page={{ page - 1 }}">Previous</a>{% endif %}
+    {% if page < pages %}<a class="btn small" href="?{{ qs }}&page={{ page + 1 }}">Next</a>{% endif %}
+  </span>
+</div>
+{% endif %}
+{% endblock %}

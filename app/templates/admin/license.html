@@ -1,0 +1,29 @@
+{% extends "base.html" %}{% set module = 'admin' %}
+{% block title %}Offline licence{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Offline licence</h1>
+  <p class="sub">This installation does not contact an external licensing service.</p></div></div>
+<div class="grid g2">
+  <div class="card pad">
+    <h3>Licence status</h3>
+    <table><tbody>
+      <tr><th>Status</th><td>{{ license.code }}</td></tr>
+      <tr><th>Installation ID</th><td class="mono">{{ license.installation_id }}</td></tr>
+      <tr><th>Customer</th><td>{{ license.customer or '—' }}</td></tr>
+      <tr><th>Licence ID</th><td class="mono">{{ license.license_id or '—' }}</td></tr>
+      <tr><th>First activation (UTC)</th><td>{{ license.activated_at | stamp if license.activated_at else '—' }}</td></tr>
+      <tr><th>Read-only from (UTC)</th><td>{{ license.expires_at | stamp if license.expires_at else '—' }}</td></tr>
+    </tbody></table>
+    <p class="note" style="margin-top:14px">To renew, give the installation ID to the issuer and place the new signed file at <code>var/license.json</code>. Restart the portal. Keep the issuer's private key off this computer.</p>
+  </div>
+  <div class="card pad">
+    <h3>Local usage</h3>
+    <table><tbody>
+      <tr><th>Calculations created</th><td>{{ total_runs }}</td></tr>
+      <tr><th>Latest calculation</th><td>{{ latest_run.label if latest_run else '—' }}</td></tr>
+      <tr><th>Latest created at (UTC)</th><td>{{ latest_run.created_at | stamp if latest_run else '—' }}</td></tr>
+    </tbody></table>
+    <p class="note" style="margin-top:14px">Usage stays on this installation. The issuer can review it only when the client shares this page or an exported audit report.</p>
+  </div>
+</div>
+{% endblock %}

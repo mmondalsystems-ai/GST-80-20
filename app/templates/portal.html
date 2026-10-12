@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}All solutions{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <div class="eyebrow">Accounts &amp; Finance</div>
+    <h1>Solutions</h1>
+    <p class="sub">Pick the module you need. Each one runs on the same sign-in, the same
+      creditors master and the same audit trail.</p>
+  </div>
+</div>
+
+{% if first_run %}
+<div class="callout warn" style="margin-bottom:20px">
+  <strong>This portal is still using the password created during installation.</strong>
+  Change it under <a href="/admin/users">Administration → Users</a> — enter a new password on the
+  Administrator row and save. Doing that also removes the copy the installer left on the server.
+  {% if sqlite %}
+  <br><br>The portal is running on a local SQLite file, which suits a pilot or a single preparer.
+  Point <code>DATABASE_URL</code> at PostgreSQL in <code>.env</code> before several people use it
+  at once.
+  {% endif %}
+</div>
+{% endif %}
+
+{% if latest and stats %}
+<section>
+  <div class="card pad">
+    <div style="display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;align-items:flex-start">
+      <div>
+        <h3>Latest position — GST 80:20</h3>
+        <div style="display:flex;gap:26px;flex-wrap:wrap;align-items:baseline;margin-top:4px">
+          <div><span class="sub" style="margin:0">{{ latest.period_month }} · {{ latest.financial_year }}</span>
+            <div style="font:400 30px/1.1 var(--serif);font-variant-numeric:tabular-nums">{{ stats.pct | pct }}</div></div>
+          <div><span class="sub" style="margin:0">Eligible spend</span>
+            <div class="mono" style="font-size:17px;margin-top:6px">{{ stats.eligible | lakh }}</div></div>
+          <div><span class="sub" style="margin:0">Project-wise indicative exposure</span>
+            <div class="mono" style="font-size:17px;margin-top:6px;{% if stats.gap %}color:var(--bad){% endif %}">{{ stats.exposure | lakh }}</div></div>
+          <div><span class="sub" style="margin:0">Open rectifications</span>
+            <div class="mono" style="font-size:17px;margin-top:6px">{{ open_rect }}</div></div>
+        </div>
+      </div>
+      <a class="btn" href="/gst8020/runs/{{ latest.id }}">Open {{ latest.period_month }}</a>
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section>
+  <div class="cat">
+  {% for s in solutions %}
+    {% if s.status == 'live' %}
+    <a class="sol live" href="{{ s.url }}">
+      <div class="top"><span class="mark">{{ s.icon }}</span>
+        <div><h4>{{ s.name }}</h4><div class="tag">{{ s.tagline }}</div></div></div>
+      <p>{{ s.description }}</p>
+      <div class="foot"><span>{{ s.owner }}</span><span class="pill p-ok">Live</span></div>
+    </a>
+    {% else %}
+    <div class="sol planned">
+      <div class="top"><span class="mark">{{ s.icon }}</span>
+        <div><h4>{{ s.name }}</h4><div class="tag">{{ s.tagline }}</div></div></div>
+      <p>{{ s.description }}</p>
+      <div class="foot"><span>{{ s.owner }}</span><span class="pill p-mute">Planned</span></div>
+    </div>
+    {% endif %}
+  {% endfor %}
+  </div>
+</section>
+{% endblock %}

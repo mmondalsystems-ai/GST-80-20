@@ -1,0 +1,50 @@
+{% extends "base.html" %}{% set nav = 'audit' %}
+{% block title %}Audit trail{% endblock %}
+{% block subnav %}
+{% if module == 'admin' %}
+<div class="subnav"><div class="inner">
+  <a href="/admin/users">Users</a><a href="/admin/audit" class="on">Audit trail</a>
+</div></div>
+{% else %}{% include "_gst_nav.html" %}{% endif %}
+{% endblock %}
+{% block content %}
+<div class="page-head"><div>
+  <h1>Audit trail</h1>
+  <p class="sub">Every change a person made, kept permanently. This is what explains a movement in
+    the registered percentage to an auditor.</p></div></div>
+
+<form class="toolbar" method="get" action="/admin/audit">
+  <input type="search" name="q" value="{{ q }}" placeholder="Person, record, detail…">
+  <select name="action"><option value="">Every action</option>
+    {% for a in actions %}<option value="{{ a }}" {% if action == a %}selected{% endif %}>{{ a.replace('_', ' ') }}</option>{% endfor %}</select>
+  <button type="submit">Apply</button>
+  <a class="btn" href="/admin/audit">Clear</a>
+</form>
+
+<div class="card scroll">
+{% if entries %}
+<table>
+  <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Record</th><th>Before</th><th>After</th><th>Detail</th></tr></thead>
+  <tbody>{% for e in entries %}
+    <tr><td class="mono">{{ e.at | stamp }}</td>
+      <td>{{ e.user_label }}</td>
+      <td><span class="pill p-accent">{{ e.action.replace('_', ' ') }}</span></td>
+      <td class="mono">{{ e.entity }}{% if e.entity_id %} · {{ e.entity_id }}{% endif %}</td>
+      <td class="mono note" style="max-width:200px;word-break:break-word">{{ e.before }}</td>
+      <td class="mono note" style="max-width:200px;word-break:break-word">{{ e.after }}</td>
+      <td class="note">{{ e.detail }}</td></tr>
+  {% endfor %}</tbody>
+</table>
+{% else %}<div class="empty">Nothing recorded yet.</div>{% endif %}
+</div>
+
+{% if pages > 1 %}
+<div class="pager">
+  <span>Page {{ page }} of {{ pages }} · {{ total }} entries</span>
+  <span>
+    {% if page > 1 %}<a class="btn small" href="?q={{ q | urlencode }}&action={{ action | urlencode }}&page={{ page - 1 }}">Previous</a>{% endif %}
+    {% if page < pages %}<a class="btn small" href="?q={{ q | urlencode }}&action={{ action | urlencode }}&page={{ page + 1 }}">Next</a>{% endif %}
+  </span>
+</div>
+{% endif %}
+{% endblock %}
