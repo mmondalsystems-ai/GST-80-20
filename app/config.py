@@ -23,7 +23,11 @@ DATA_DIR = Path(os.getenv("GST8020_DATA_DIR", str(
 if load_dotenv:
     load_dotenv(DATA_DIR / ".env")
 
-VAR_DIR = Path(os.getenv("VAR_DIR", DATA_DIR / "var"))
+# True when running on Vercel. The file system there is read-only except /tmp, which is
+# temporary, so anything that must persist lives in the database and the secrets come from
+# environment variables.
+ON_VERCEL = bool(os.getenv("VERCEL"))
+VAR_DIR = Path(os.getenv("VAR_DIR", "/tmp/gst8020" if ON_VERCEL else DATA_DIR / "var"))
 
 
 def _bool(name: str, default: bool = False) -> bool:
@@ -44,6 +48,8 @@ def _secret_key() -> str:
     env = os.getenv("SECRET_KEY", "").strip()
     if env and env not in ("CHANGE_ME_TO_A_LONG_RANDOM_STRING", "change-me"):
         return env
+    if ON_VERCEL:
+        raise RuntimeError("Set the SECRET_KEY environment variable in Vercel (a long random string).")
     key_file = VAR_DIR / "secret.key"
     if key_file.exists():
         return key_file.read_text(encoding="utf-8").strip()
@@ -67,6 +73,8 @@ def _database_url() -> str:
     url = os.getenv("DATABASE_URL", "").strip()
     if url and "CHANGE_ME" not in url:
         return url
+    if ON_VERCEL:
+        raise RuntimeError("Set the DATABASE_URL environment variable in Vercel (Supabase Postgres).")
     return f"sqlite:///{(VAR_DIR / 'finops.db').as_posix()}"
 
 
@@ -80,6 +88,9 @@ def _bootstrap_password() -> str:
     env = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "").strip()
     if env and "CHANGE" not in env.upper():
         return env
+    if ON_VERCEL:
+        # Never fall back to the public default password on an internet-facing deployment.
+        raise RuntimeError("Set the BOOTSTRAP_ADMIN_PASSWORD environment variable in Vercel.")
     pw_file = VAR_DIR / "first-admin-password.txt"
     if pw_file.exists():
         return pw_file.read_text(encoding="utf-8").strip()

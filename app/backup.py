@@ -56,6 +56,8 @@ def backup_after_run(today=None):
     Returns (created, message). Failure never rolls back an already-saved run;
     the caller must display the failure prominently.
     """
+    if os.getenv("VERCEL"):
+        return False, "Cloud deployment: the database is backed up by Supabase, no local backup was made."
     today = today or dt.date.today()
     if BACKUP_DIR_EXPLICIT and not BACKUP_DIR.is_dir():
         raise FileNotFoundError(f"Configured backup folder is unavailable: {BACKUP_DIR}")

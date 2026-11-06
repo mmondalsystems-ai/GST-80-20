@@ -1,6 +1,7 @@
 """Finance Operations Portal — application entry point."""
 
 import json
+import os
 import datetime as dt
 
 from fastapi import FastAPI, Request, Depends, Form
@@ -310,8 +311,9 @@ def startup():
         f"  Email:    "
         f"{BOOTSTRAP_ADMIN_EMAIL}",
 
-        f"  Password: "
-        f"{BOOTSTRAP_ADMIN_PASSWORD}",
+        "  Password: "
+        + ("(the BOOTSTRAP_ADMIN_PASSWORD you set)" if os.getenv("VERCEL")
+           else f"{BOOTSTRAP_ADMIN_PASSWORD}"),
 
         (
             "Change it under "
