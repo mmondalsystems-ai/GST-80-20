@@ -121,3 +121,17 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 USING_SQLITE = DATABASE_URL.startswith("sqlite")
 GENERATED_PASSWORD_FILE = VAR_DIR / "first-admin-password.txt"
+
+# Optional Anthropic integration. The API key deliberately stays outside the
+# database and source tree; the UI only reports whether it is configured.
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
+ANTHROPIC_API_URL = os.getenv("ANTHROPIC_API_URL", "https://api.anthropic.com/v1/messages").strip()
+ANTHROPIC_API_VERSION = os.getenv("ANTHROPIC_API_VERSION", "2023-06-01").strip()
+
+# Bound each workbook before openpyxl expands it in memory. The same protection
+# applies to Render and to the offline Windows build.
+try:
+    MAX_UPLOAD_MB = min(256, max(1, int(os.getenv("MAX_UPLOAD_MB", "64"))))
+except ValueError:
+    MAX_UPLOAD_MB = 64
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024

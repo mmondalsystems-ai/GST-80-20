@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}AI Workspace{% endblock %}
+{% block subnav %}{% include "_gst_nav.html" %}{% endblock %}
+{% block content %}
+<div class="page-head ai-head">
+  <div><span class="eyebrow">Anthropic · optional assistance</span><h1>AI Workspace</h1>
+    <p>Explain, investigate and communicate calculated results without changing the approved Python calculation.</p></div>
+  <div class="ai-state {{ 'enabled' if settings.enabled else 'disabled' }}"><span></span>{{ 'Enabled' if settings.enabled else 'Disabled by default' }}</div>
+</div>
+
+{% if flash %}<div class="notice ok">{{ flash }}</div>{% endif %}
+<div class="ai-principles">
+  <div><strong>Read-only analysis</strong><span>AI cannot change classifications, calculated values or frozen months.</span></div>
+  <div><strong>Explicit use only</strong><span>Data is sent to Anthropic only when a user presses an AI action button.</span></div>
+  <div><strong>Human approval</strong><span>Master suggestions remain proposals until reviewed and manually applied.</span></div>
+</div>
+
+{% if user.is_admin %}
+<details class="box ai-controls" id="controls" {% if not settings.enabled %}open{% endif %}>
+  <summary><span><strong>Controls &amp; cost guardrails</strong><small>Administrator only · all capabilities start off</small></span><span>Configure</span></summary>
+  <div class="body ai-key-panel" id="api-key">
+    <div class="ai-key-status"><div><span class="status-dot {{ 'ok' if key_status.configured else 'bad' }}"></span><div><strong>{{ 'Anthropic key configured' if key_status.configured else 'Anthropic key not configured' }}</strong><small>{{ key_status.source }}{% if key_status.fingerprint %} · {{ key_status.fingerprint }}{% endif %}{% if key_status.updated_at %} · updated {{ key_status.updated_at|stamp }}{% endif %}</small></div></div></div>
+    <form method="post" action="/gst8020/ai/api-key" data-loading="Saving key…" autocomplete="off">
+      <input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}">
+      <label>Paste a new Anthropic API key<input type="password" name="api_key" minlength="20" required autocomplete="new-password" spellcheck="false" placeholder="Key is encrypted and never shown again"></label>
+      <button type="submit">{{ 'Replace key' if key_status.configured else 'Save key' }}</button>
+    </form>
+    {% if key_status.source == 'Admin UI' %}<form method="post" action="/gst8020/ai/api-key/remove" onsubmit="return confirm('Remove the stored Anthropic API key? AI requests will stop unless an environment key exists.')"><input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}"><button class="secondary" type="submit">Remove stored key</button></form>{% endif %}
+    <p class="hint">Write-only secret: the original value cannot be viewed or recovered from this screen. Replacing it is audited without logging the key.</p>
+  </div>
+  <form method="post" action="/gst8020/ai/settings" class="body ai-settings-form" data-loading="Saving…">
+    <input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}">
+    <div class="ai-master-switch"><label class="switch"><input type="checkbox" name="enabled" value="1" {% if settings.enabled %}checked{% endif %}><span></span></label>
+      <div><strong>Enable Anthropic AI Workspace</strong><small>{% if key_status.configured %}API key detected from {{ key_status.source }}.{% else %}Save an API key above before users run AI actions.{% endif %}</small></div></div>
+    <div class="toggle-grid">
+      {% for key, label in capabilities.items() %}<label class="toggle-card"><input type="checkbox" name="{{ key }}" value="1" {% if settings[key] %}checked{% endif %}>
+        <span><strong>{{ label }}</strong><small>Allow users to run this capability</small></span></label>{% endfor %}
+    </div>
+    <div class="form-grid four">
+      <label>Anthropic model<input name="model" value="{{ settings.model }}" required></label>
+      <label>Maximum output tokens<input type="number" name="max_tokens" min="256" max="4096" value="{{ settings.max_tokens }}"></label>
+      <label>Input price / million (USD)<input type="number" step="0.01" min="0" name="input_cost_per_million" value="{{ settings.input_cost_per_million }}"></label>
+      <label>Output price / million (USD)<input type="number" step="0.01" min="0" name="output_cost_per_million" value="{{ settings.output_cost_per_million }}"></label>
+      <label>Monthly guardrail (USD)<input type="number" step="0.01" min="0" name="monthly_budget_usd" value="{{ settings.monthly_budget_usd }}"><small>0 means no application guardrail.</small></label>
+    </div>
+    <div class="actions"><button class="primary" type="submit">Save AI controls</button></div>
+  </form>
+</details>
+{% endif %}
+
+{% if not settings.enabled %}<div class="empty ai-empty"><span class="feature-icon">AI</span><h2>AI capabilities are currently off</h2><p>An administrator can enable the workspace and then select only the capabilities the team needs. The rest of GST 80:20 continues to work normally.</p></div>{% else %}
+<section class="section-head"><div><span class="eyebrow">Choose a task</span><h2>What do you want help with?</h2></div></section>
+<div class="ai-capability-grid">
+  <article class="ai-capability {{ '' if settings.explain_classification else 'off' }}"><span class="ai-number">01</span><h3>Explain a classification</h3><p>Uses the exact voucher, ledger, GSTIN, stored result and deterministic rule trace.</p>
+    <form method="post" action="/gst8020/ai/run" data-loading="Explaining…"><input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}"><input type="hidden" name="capability" value="explain_classification">
+      <label>Calculated line<select name="row_id" required><option value="">Choose voucher line</option>{% for row in result_rows %}<option value="{{ row.id }}">{{ row.month }} · {{ row.voucher_id }} · {{ row.ledger }} · {{ row.gst_status }}</option>{% endfor %}</select></label>
+      <button class="primary" {% if not settings.explain_classification %}disabled{% endif %}>Explain this line</button></form></article>
+
+  <article class="ai-capability {{ '' if settings.monthly_risk_summary else 'off' }}"><span class="ai-number">02</span><h3>Monthly movement &amp; risks</h3><p>Compares the selected month with the previous available run and highlights project risk.</p>
+    <form method="post" action="/gst8020/ai/run" data-loading="Analysing…"><input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}"><input type="hidden" name="capability" value="monthly_risk_summary">{% include "gst/_ai_run_select.html" %}<button class="primary" {% if not settings.monthly_risk_summary %}disabled{% endif %}>Create risk summary</button></form></article>
+
+  <article class="ai-capability {{ '' if settings.group_rectifications else 'off' }}"><span class="ai-number">03</span><h3>Root-cause rectifications</h3><p>Groups review items into likely booking, master-data and source-quality causes.</p>
+    <form method="post" action="/gst8020/ai/run" data-loading="Grouping…"><input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}"><input type="hidden" name="capability" value="group_rectifications">{% include "gst/_ai_run_select.html" %}<button class="primary" {% if not settings.group_rectifications %}disabled{% endif %}>Group open items</button></form></article>
+
+  <article class="ai-capability {{ '' if settings.results_qa else 'off' }}"><span class="ai-number">04</span><h3>Ask the calculated results</h3><p>Answers from a bounded result snapshot. It never generates or executes database queries.</p>
+    <form method="post" action="/gst8020/ai/run" data-loading="Answering…"><input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}"><input type="hidden" name="capability" value="results_qa">{% include "gst/_ai_run_select.html" %}<label>Your question<textarea name="question" maxlength="1000" required placeholder="Which projects have the largest unregistered exposure, and why?"></textarea></label><button class="primary" {% if not settings.results_qa %}disabled{% endif %}>Ask Anthropic</button></form></article>
+
+  <article class="ai-capability {{ '' if settings.creditor_suggestions else 'off' }}"><span class="ai-number">05</span><h3>Creditor &amp; master suggestions</h3><p>Ranks only deterministic name candidates. Every proposal waits for human disposition.</p>
+    <form method="post" action="/gst8020/ai/run" data-loading="Comparing…"><input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}"><input type="hidden" name="capability" value="creditor_suggestions"><label>Creditor<select name="creditor_id" required><option value="">Choose creditor</option>{% for c in creditors %}<option value="{{ c.id }}">{{ c.account_name }}{% if c.gstin %} · {{ c.gstin }}{% endif %}</option>{% endfor %}</select></label><button class="primary" {% if not settings.creditor_suggestions %}disabled{% endif %}>Suggest matches</button></form></article>
+
+  <article class="ai-capability {{ '' if settings.draft_narratives else 'off' }}"><span class="ai-number">06</span><h3>Management &amp; audit narratives</h3><p>Drafts evidence-bound commentary with facts and judgement clearly separated.</p>
+    <form method="post" action="/gst8020/ai/run" data-loading="Drafting…"><input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}"><input type="hidden" name="capability" value="draft_narratives">{% include "gst/_ai_run_select.html" %}<label>Optional emphasis<input name="question" maxlength="500" placeholder="e.g. audit committee focus on shortfall and remediation"></label><button class="primary" {% if not settings.draft_narratives %}disabled{% endif %}>Draft narratives</button></form></article>
+</div>{% endif %}
+
+{% if selected %}<section class="ai-result box" id="result"><div class="card-heading"><div><span class="eyebrow">AI result · {{ capabilities[selected.capability] }}</span><h2>{{ selected.question }}</h2></div><small>{{ selected.created_at|stamp }}</small></div><div class="ai-response">{{ selected.response }}</div><details><summary>Evidence references</summary><div class="source-chips">{% for ref in selected.source_refs|fromjson %}<code>{{ ref }}</code>{% endfor %}</div></details></section>{% endif %}
+
+{% if suggestions %}<section id="suggestions"><div class="section-head"><div><span class="eyebrow">Human decision required</span><h2>Pending AI suggestions</h2></div></div><div class="suggestion-list">{% for item in suggestions %}<article class="box"><div class="ai-response">{{ item.proposed_value }}</div><form method="post" action="/gst8020/ai/suggestions/{{ item.id }}"><input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}"><input name="note" placeholder="Verification note"><button name="decision" value="approved">Approve proposal</button><button class="secondary" name="decision" value="rejected">Reject</button></form><small>Approval records your review; it does not change the creditor master automatically.</small></article>{% endfor %}</div></section>{% endif %}
+
+<section class="finops-section" id="usage"><div class="section-head"><div><span class="eyebrow">FinOps · current month</span><h2>Anthropic usage</h2><p>{% if user.is_admin %}All users{% else %}Your usage{% endif %} · estimated cost uses the rates configured above.</p></div></div>
+  <div class="tiles ai-metrics"><div class="tile"><span>Requests</span><strong class="v">{{ finops.requests }}</strong></div><div class="tile"><span>Tokens</span><strong class="v">{{ finops.tokens|inr(0) }}</strong></div><div class="tile"><span>Est. cost</span><strong class="v">${{ '%.4f'|format(finops.cost) }}</strong></div><div class="tile"><span>Success rate</span><strong class="v">{{ finops.success_rate|pct(1) }}</strong></div><div class="tile"><span>Avg. latency</span><strong class="v">{{ finops.latency|round|int }} ms</strong></div></div>
+  <div class="dashboard-grid"><div class="box"><div class="card-heading"><h3>By capability</h3></div><div class="table-scroll"><table><thead><tr><th>Capability</th><th>Calls</th><th>Tokens</th><th>Errors</th><th>Est. cost</th></tr></thead><tbody>{% for key, item in finops.by_capability.items() %}<tr><td>{{ capabilities.get(key,key) }}</td><td>{{ item.requests }}</td><td>{{ item.tokens|inr(0) }}</td><td>{{ item.errors }}</td><td>${{ '%.4f'|format(item.cost) }}</td></tr>{% else %}<tr><td colspan="5">No Anthropic usage this month.</td></tr>{% endfor %}</tbody></table></div></div>
+    <div class="box"><div class="card-heading"><h3>Recent requests</h3></div><div class="usage-list">{% for item in finops.rows[:12] %}<div><span class="status-dot {{ 'ok' if item.success else 'bad' }}"></span><div><strong>{{ capabilities.get(item.capability,item.capability) }}</strong><small>{{ item.created_at|stamp }} · {{ item.model }} · {{ item.latency_ms }} ms{% if item.request_id %} · {{ item.request_id }}{% endif %}</small></div><b>{{ (item.input_tokens + item.output_tokens + item.cache_creation_tokens + item.cache_read_tokens)|inr(0) }}</b></div>{% else %}<p class="empty-row">No requests recorded.</p>{% endfor %}</div></div></div>
+</section>
+
+{% if interactions %}<details class="box ai-history"><summary>Recent AI results</summary><div class="month-list">{% for item in interactions %}<a href="/gst8020/ai?interaction={{ item.id }}#result"><div><strong>{{ capabilities.get(item.capability,item.capability) }}</strong><small>{{ item.question|truncate(90) }}</small></div><small>{{ item.created_at|stamp }}</small></a>{% endfor %}</div></details>{% endif %}
+{% endblock %}

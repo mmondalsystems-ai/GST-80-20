@@ -6,7 +6,8 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from ..models import RunRow, Rectification, Creditor
-from .calc import summarise, summarise_by_project, vendor_concentration, merged_config
+from .calc import (summarise, summarise_by_project, summarise_portfolio,
+                   vendor_concentration, merged_config)
 
 HDR_FONT = Font(bold=True, color="FFFFFF")
 HDR_FILL = PatternFill("solid", fgColor="1F3864")
@@ -193,6 +194,129 @@ def build_workbook(db, run) -> io.BytesIO:
                    else json.dumps(v) if isinstance(v, dict) else str(v)])
     ws.column_dimensions["A"].width = 34
     ws.column_dimensions["B"].width = 110
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def build_period_workbook(db, runs, cfg) -> io.BytesIO:
+    """Export an inclusive selected-month range without averaging percentages."""
+    runs = sorted(runs, key=lambda item: (item.period_start, item.id))
+    ids = [run.id for run in runs]
+    run_by_id = {run.id: run for run in runs}
+    db_rows = (list(db.scalars(select(RunRow).where(RunRow.run_id.in_(ids))
+                               .order_by(RunRow.voucher_date, RunRow.run_id, RunRow.id)))
+               if ids else [])
+    plain = [dict(voucher_id=r.voucher_id, head=r.head, project=r.project,
+                  eligibility=r.eligibility, gst_status=r.gst_status, closing=r.closing,
+                  ledger=r.ledger, gstin=r.gstin, month=r.month)
+             for r in db_rows]
+    total = summarise_portfolio(plain, cfg)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Selected Period Summary"
+    ws.append(["Selected period", f"{runs[0].period_month} to {runs[-1].period_month}" if runs else ""])
+    ws.append(["Financial year", runs[0].financial_year if runs else ""])
+    ws.append(["Months included", len(runs)])
+    ws.append([])
+    ws.append(["Measure", "Value"])
+    for cell in ws[5]:
+        cell.font, cell.fill = HDR_FONT, HDR_FILL
+    for label, value in (
+        ("Eligible", total["eligible"]), ("Registered", total["registered"]),
+        ("Unregistered", total["unregistered"]), ("Registered %", total["pct"] / 100),
+        ("Project shortfall", total["gap"]), ("Indicative exposure", total["exposure"]),
+    ):
+        ws.append([label, value])
+    for row_no in range(6, 12):
+        ws.cell(row_no, 2).number_format = "0.00%" if row_no == 9 else "#,##0.00"
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 24
+
+    _sheet(wb, "By Project",
+           ["Project", "Eligible", "Registered", "Unregistered", "Registered %",
+            "Shortfall", "Tax exposure"],
+           [{"Project": p, "Eligible": round(v["eligible"], 2),
+             "Registered": round(v["registered"], 2),
+             "Unregistered": round(v["unregistered"], 2),
+             "Registered %": v["pct"] / 100, "Shortfall": round(v["gap"], 2),
+             "Tax exposure": round(v["exposure"], 2)}
+            for p, v in summarise_by_project(plain, cfg).items()])
+    project_ws = wb["By Project"]
+    for row_no in range(2, project_ws.max_row + 1):
+        project_ws.cell(row_no, 5).number_format = "0.00%"
+        for col in (2, 3, 4, 6, 7):
+            project_ws.cell(row_no, col).number_format = "#,##0.00"
+
+    month_rows = []
+    for run in runs:
+        items = [row for row in plain if row["month"] == run.period_month]
+        stats = summarise_portfolio(items, cfg)
+        month_rows.append({"Month": run.period_start, "Label": run.label,
+                           "Status": run.status, "Eligible": stats["eligible"],
+                           "Registered": stats["registered"],
+                           "Unregistered": stats["unregistered"],
+                           "Registered %": stats["pct"] / 100})
+    month_ws = _sheet(wb, "Month by Month",
+                      ["Month", "Label", "Status", "Eligible", "Registered",
+                       "Unregistered", "Registered %"], month_rows)
+    for row_no in range(2, month_ws.max_row + 1):
+        month_ws.cell(row_no, 1).number_format = "mmm-yy"
+        for col in (4, 5, 6):
+            month_ws.cell(row_no, col).number_format = "#,##0.00"
+        month_ws.cell(row_no, 7).number_format = "0.00%"
+
+    detail_columns = ["Run Label", "Run Status"] + COLUMNS
+    details = []
+    for r in db_rows:
+        run = run_by_id[r.run_id]
+        details.append({
+            "Run Label": run.label, "Run Status": run.status,
+            "Unique_Voucher_ID": r.voucher_id, "Head": r.head, "Year": r.year,
+            "Month": r.voucher_date.replace(day=1) if r.voucher_date else None,
+            "Voucher_Date": r.voucher_date, "Voucher_Type": r.voucher_type,
+            "Voucher_No": int(r.voucher_no) if str(r.voucher_no).isdigit() else r.voucher_no,
+            "Bill_No": r.bill_no, "Bill_Date": r.bill_date, "Project Name": r.project,
+            "Narration": "", "Account_Head": r.account_head,
+            "Account_Name": r.account_name, "Account Ledger": r.ledger,
+            "GST No.": r.gstin, "Debit": r.debit, "Credit": r.credit,
+            "Closing": r.closing, "Formula Key": r.formula_key,
+            "80-20": r.eligibility, "GST Status": r.gst_status,
+        })
+    detail = _sheet(wb, "80-20 Table", detail_columns, details)
+    for row_no in range(2, detail.max_row + 1):
+        detail.cell(row_no, 6).number_format = "mmm-yy"
+        for col in (7, 11):
+            detail.cell(row_no, col).number_format = "dd-mmm-yy"
+        for col in (18, 19, 20):
+            detail.cell(row_no, col).number_format = "#,##0.00"
+
+    items = (list(db.scalars(select(Rectification).where(Rectification.run_id.in_(ids))
+                             .order_by(Rectification.run_id, Rectification.id))) if ids else [])
+    _sheet(wb, "Needs Review",
+           ["Month", "Run Status", "Unique_Voucher_ID", "Account Ledger (resolved)",
+            "Issue", "Suggestions", "Workflow Status"],
+           [{"Month": run_by_id[item.run_id].period_start,
+             "Run Status": run_by_id[item.run_id].status,
+             "Unique_Voucher_ID": item.voucher_id,
+             "Account Ledger (resolved)": item.ledger, "Issue": item.reason,
+             "Suggestions": item.suggestions, "Workflow Status": item.status}
+            for item in items])
+    review = wb["Needs Review"]
+    for row_no in range(2, review.max_row + 1):
+        review.cell(row_no, 1).number_format = "mmm-yy"
+
+    ws = wb.create_sheet("Settings Used")
+    ws.append(["Setting", "Value"])
+    for cell in ws[1]:
+        cell.font, cell.fill = HDR_FONT, HDR_FILL
+    for key, value in merged_config(cfg).items():
+        ws.append([key, ", ".join(map(str, value)) if isinstance(value, list) else str(value)])
+    ws.column_dimensions["A"].width = 34
+    ws.column_dimensions["B"].width = 90
 
     buf = io.BytesIO()
     wb.save(buf)

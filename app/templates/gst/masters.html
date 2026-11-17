@@ -10,9 +10,9 @@
 </div></div>
 
 <div class="callout" style="margin-bottom:20px">
-  <strong>Golden calculation protected.</strong> Party resolution, GST status, bank treatment,
-  approved party corrections and duplicate-CGST repair follow <span class="mono">80-20.py</span>
-  and cannot be changed here.
+  <strong>Calculation controls.</strong> Core eligibility follows <span class="mono">80-20.py</span>.
+  The approved business updates for the replacement creditor master and GST-ledger evidence
+  are recorded in each run's configuration snapshot.
 </div>
 
 <form method="post" action="/gst8020/masters">
@@ -29,6 +29,21 @@
     <label class="field"><span>Excluded Parent Group Names — one per line</span>
       <textarea name="exclude_parent_groups">{{ cfg.exclude_parent_groups | join('\n') }}</textarea>
       <span class="help">The golden default excludes TDS Receivable.</span>
+    </label>
+  </div>
+
+  <div class="card pad">
+    <h3>Creditor registration master</h3>
+    <label class="field"><span>Allowed creditor groups — one per line</span>
+      <textarea name="creditor_group_allowlist">{{ cfg.creditor_group_allowlist | join('\n') }}</textarea>
+      <span class="help">The replacement export contains debtors, banks, assets and tax ledgers.
+        Only these groups, legacy groups containing “creditor”, and legacy “and Others” groups
+        can supply party GSTINs.</span>
+    </label>
+    <label class="field"><span>Company GST state code</span>
+      <input type="text" inputmode="numeric" maxlength="2" name="company_state_code"
+             value="{{ cfg.company_state_code }}">
+      <span class="help">Used only to resolve multiple GST registrations. West Bengal is 19.</span>
     </label>
   </div>
 

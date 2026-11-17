@@ -3,51 +3,71 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>{% block title %}{{ PORTAL_NAME }}{% endblock %} · {{ ORG_NAME }}</title>
-<link rel="stylesheet" href="/static/app.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='5' fill='%2324457a'/><text x='16' y='22' font-size='15' font-family='monospace' fill='white' text-anchor='middle'>₹</text></svg>">
+<link rel="stylesheet" href="/static/app.css?v=20261115-ui3">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231d4ed8'/><text x='16' y='22' font-size='15' font-family='Arial' font-weight='700' fill='white' text-anchor='middle'>80</text></svg>">
 </head>
 <body>
+<a class="skip-link" href="#main-content">Skip to main content</a>
 <header class="topbar">
   <div class="inner">
-    <a class="brand" href="/"><span class="mark">FO</span>
-      <span>{{ ORG_NAME }}<small>{{ PORTAL_NAME }}</small></span></a>
-    <nav class="modules">
-      <a href="/" {% if not module %}class="on"{% endif %}>All solutions</a>
-      {% for s in solutions if s.status == 'live' %}
-        <a href="{{ s.url }}" {% if module == s.slug %}class="on"{% endif %}>{{ s.name }}</a>
-      {% endfor %}
-      {% if user and user.is_admin %}<a href="/admin/users" {% if module == 'admin' %}class="on"{% endif %}>Administration</a>{% endif %}
-      {% if user and user.is_admin %}<a href="/admin/license">Licence</a>{% endif %}
-    </nav>
+    <a class="brand" href="{% if user %}/gst8020{% else %}/{% endif %}" aria-label="{{ ORG_NAME }} home">
+      <span class="mark" aria-hidden="true">80</span>
+      <span class="brand-copy"><strong>{{ ORG_NAME }}</strong><small>GST 80:20 workspace</small></span>
+    </a>
     {% if user %}
-    <div class="who">
-      <span>{{ user.name }} · {{ user.role }}</span>
-      <button class="small" id="theme" type="button">Theme</button>
-      <a class="btn small" href="/logout">Sign out</a>
+    <div class="top-actions">
+      <button class="icon-button" id="theme" type="button" aria-label="Change colour theme" title="Change colour theme">
+        <span aria-hidden="true">◐</span><span class="desktop-only">Theme</span>
+      </button>
+      <details class="account-menu">
+        <summary aria-label="Open account menu"><span class="avatar" aria-hidden="true">{{ user.name[:1] | upper }}</span><span class="desktop-only">{{ user.name }}</span></summary>
+        <div class="account-popover">
+          <div class="account-meta"><strong>{{ user.name }}</strong><span>{{ user.role }}</span></div>
+          {% if user.is_admin %}<a href="/admin/users">Administration</a>{% endif %}
+          <a href="/logout">Sign out</a>
+        </div>
+      </details>
     </div>
     {% endif %}
   </div>
 </header>
-{% if request.state.license is defined and request.state.license.read_only %}
-<div class="wrap" style="padding-top:12px"><div class="callout err">
-  {{ request.state.license.message }} Existing results remain viewable and exportable.
-  {% if user and user.is_admin %}<a href="/admin/license">Licence details</a>{% endif %}
-</div></div>
-{% endif %}
+
 {% block subnav %}{% endblock %}
-<main class="wrap">{% block content %}{% endblock %}</main>
+<main class="wrap" id="main-content" tabindex="-1">{% block content %}{% endblock %}</main>
+<footer class="footer"><div class="inner"><span>{{ ORG_NAME }} · GST 80:20</span><span>Local, auditable and offline-ready</span></div></footer>
+
 <script>
 (function () {
   var root = document.documentElement;
   try { var t = localStorage.getItem("finops-theme"); if (t) root.setAttribute("data-theme", t); } catch (e) {}
-  var b = document.getElementById("theme");
-  if (b) b.addEventListener("click", function () {
+  var theme = document.getElementById("theme");
+  if (theme) theme.addEventListener("click", function () {
     var cur = root.getAttribute("data-theme");
     var sysDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     var next = cur ? (cur === "dark" ? "light" : "dark") : (sysDark ? "light" : "dark");
     root.setAttribute("data-theme", next);
     try { localStorage.setItem("finops-theme", next); } catch (e) {}
+  });
+  document.querySelectorAll('input[type="file"]').forEach(function (input) {
+    input.addEventListener("change", function () {
+      var field = input.closest(".upload-card");
+      if (!field) return;
+      field.classList.toggle("has-file", !!input.files.length);
+      var name = field.querySelector("[data-file-name]");
+      if (name) name.textContent = input.files.length ? input.files[0].name : "No file selected";
+    });
+  });
+  document.querySelectorAll('form[data-loading]').forEach(function (form) {
+    form.addEventListener("submit", function () {
+      var button = form.querySelector('button[type="submit"]');
+      if (!button || button.disabled) return;
+      button.disabled = true;
+      button.dataset.originalText = button.textContent;
+      button.textContent = form.dataset.loading || "Working…";
+      form.classList.add("is-submitting");
+    });
   });
 })();
 </script>

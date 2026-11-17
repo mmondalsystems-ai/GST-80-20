@@ -1,0 +1,59 @@
+{% extends "base.html" %}{% import "_macros.html" as m %}{% set nav = 'period' %}
+{% block title %}Selected period{% endblock %}
+{% block subnav %}{% include "_gst_nav.html" %}{% endblock %}
+{% block content %}
+<div class="page-head"><div>
+  <h1>Selected period</h1>
+  <p class="sub">Consolidate completed months within one financial year. Percentages are calculated
+    from the combined registered and eligible amounts, not averaged month by month.</p>
+</div></div>
+
+<form method="get" action="/gst8020/period" class="card pad" style="margin-bottom:18px">
+  <div class="grid g2">
+    <label class="field"><span>Financial year</span><select name="fy" required>
+      {% for item in years %}<option value="{{ item }}" {% if item == fy %}selected{% endif %}>{{ item }}</option>{% endfor %}
+    </select></label>
+    <label class="field"><span>Start month</span><input type="month" name="start" value="{{ start }}" required></label>
+    <label class="field"><span>End month</span><input type="month" name="end" value="{{ end }}" required></label>
+    <label class="field"><span>Calculation status</span>
+      <span><input type="checkbox" name="include_drafts" value="true" {% if include_drafts %}checked{% endif %}>
+        Include draft calculations</span>
+      <span class="help">Frozen calculations only are used by default.</span>
+    </label>
+  </div>
+  <button class="primary" type="submit">Show period</button>
+</form>
+
+{% if stats %}
+<section>
+  <div class="card hero">
+    <div><div class="eyebrow">Combined registered share · {{ runs | length }} month(s)</div>
+      <div class="bignum">{{ stats.pct | pct }}</div>{{ m.verdict(stats, cfg) }}{{ m.gauge(stats, cfg) }}</div>
+    <div class="stats">
+      <div class="stat big"><span>Eligible spend</span><b>{{ stats.eligible | inr }}</b></div>
+      <div class="stat"><span>Registered</span><b>{{ stats.registered | inr }}</b></div>
+      <div class="stat"><span>Unregistered</span><b>{{ stats.unregistered | inr }}</b></div>
+      <div class="stat"><span>Projects below floor</span><b>{{ stats.below_projects }}</b></div>
+      <div class="stat {% if stats.gap %}bad{% endif %}"><span>Indicative exposure</span><b>{{ stats.exposure | inr }}</b></div>
+    </div>
+  </div>
+</section>
+<div class="actions" style="margin:14px 0">
+  <a class="btn primary" href="/gst8020/period/export.xlsx?fy={{ fy }}&start={{ start }}&end={{ end }}&include_drafts={{ 'true' if include_drafts else 'false' }}">Export selected period</a>
+</div>
+<div class="grid g2">
+  <div class="card"><div style="padding:15px 16px 4px"><h3>Months included</h3></div>
+    <table><thead><tr><th>Month</th><th>Label</th><th>Status</th></tr></thead><tbody>
+      {% for run in runs %}<tr><td>{{ run.period_month }}</td><td><a href="/gst8020/runs/{{ run.id }}">{{ run.label }}</a></td>
+        <td>{% if run.status == 'frozen' %}<span class="pill p-ok">Frozen</span>{% else %}<span class="pill p-mute">Draft</span>{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div>
+  <div class="card"><div style="padding:15px 16px 4px"><h3>By project</h3></div>
+    <table><thead><tr><th>Project</th><th class="n">Eligible</th><th class="n">Registered %</th></tr></thead><tbody>
+      {% for name, value in projects.items() %}<tr><td>{{ name }}</td><td class="n">{{ value.eligible | inr }}</td>
+        <td class="n">{{ value.pct | pct }}</td></tr>{% endfor %}
+    </tbody></table></div>
+</div>
+{% else %}
+<div class="card"><div class="empty">No qualifying calculations exist in this period. Enable drafts for a review-only view, or freeze the required months.</div></div>
+{% endif %}
+{% endblock %}

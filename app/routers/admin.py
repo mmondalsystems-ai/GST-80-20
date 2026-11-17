@@ -5,24 +5,13 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import User, AuditLog, Run
-from ..license import evaluate as evaluate_license
+from ..models import User, AuditLog
 from ..auth import require_user, require_admin, hash_password, audit, ROLES, require_csrf
 from ..config import BOOTSTRAP_ADMIN_EMAIL, GENERATED_PASSWORD_FILE
 from ..templating import templates
 from ..catalogue import SOLUTIONS
 
 router = APIRouter(prefix="/admin", tags=["admin"])
-
-
-@router.get("/license", response_class=HTMLResponse)
-def license_details(request: Request, user: User = Depends(require_admin),
-                    db: Session = Depends(get_db)):
-    status = evaluate_license(db)
-    latest = db.scalar(select(Run).order_by(Run.created_at.desc()))
-    return templates.TemplateResponse(request, "admin/license.html", ctx(
-        user, license=status, total_runs=db.scalar(select(func.count(Run.id))) or 0,
-        latest_run=latest))
 
 
 def ctx(user, **kw):

@@ -1,102 +1,68 @@
-{% extends "base.html" %}{% import "_macros.html" as m %}
-{% set nav = 'overview' %}
-{% block title %}GST 80:20{% endblock %}
+{% extends "base.html" %}{% import "_macros.html" as m %}{% set nav = 'overview' %}
+{% block title %}Dashboard{% endblock %}
 {% block subnav %}{% include "_gst_nav.html" %}{% endblock %}
 {% block content %}
-<div class="page-head">
-  <div><div class="eyebrow">Accounts — Indirect Tax</div>
-    <h1>GST 80:20 Input Credit</h1>
-    <p class="sub">Monthly classifications and the registered-share figure follow 80-20.py.
-      Project-level threshold indicators below are supplementary summaries of those rows.</p></div>
-  <div class="actions">
-    {% if user.can_edit %}<a class="btn primary" href="/gst8020/new">New calculation</a>{% endif %}
-  </div>
+<div class="page-head dashboard-head">
+  <div><div class="eyebrow">GST 80:20 workspace</div><h1>Compliance dashboard</h1>
+    <p class="sub">Your current position, pending work and the clearest next step.</p></div>
+  {% if user.can_edit %}<a class="btn primary large" href="/gst8020/new">+ Calculate a month</a>{% endif %}
 </div>
 
+{% if flash %}<div class="callout prominent" role="status"><strong>Update</strong><span>{{ flash }}</span></div>{% endif %}
+
 {% if not runs %}
-<div class="card"><div class="empty">
-  <p>No calculations yet.</p>
-  {% if user.can_edit %}
-  <p class="note">Upload a month's Day Book, Search Voucher and Creditors exports to begin.</p>
-  <a class="btn primary" href="/gst8020/new" style="margin-top:10px">Start the first calculation</a>
-  {% else %}<p class="note">A preparer needs to run the first month.</p>{% endif %}
-</div></div>
+<section class="onboarding-card card">
+  <div class="onboarding-copy"><div class="eyebrow">Get started</div><h2>Complete your first monthly calculation</h2>
+    <p>Prepare three Tally exports. The portal will validate them, apply the approved Python logic and guide you through review and finalisation.</p>
+    {% if user.can_edit %}<a class="btn primary large" href="/gst8020/new">Start first calculation <span aria-hidden="true">→</span></a>
+    {% else %}<div class="callout">A preparer or administrator needs to run the first month.</div>{% endif %}</div>
+  <ol class="welcome-steps"><li><span>1</span><div><strong>Upload</strong><small>Day Book, Search Voucher and Creditors Details</small></div></li>
+    <li><span>2</span><div><strong>Review</strong><small>Check exceptions and supplier registration</small></div></li>
+    <li><span>3</span><div><strong>Freeze</strong><small>Lock the approved monthly snapshot</small></div></li>
+    <li><span>4</span><div><strong>Report</strong><small>Export monthly, period and year-to-date views</small></div></li></ol>
+</section>
 {% else %}
 
-{% for y in fy %}
-{% set s = y.total %}
-<section>
-  <h2>{{ y.fy }} — year to date</h2>
-  <div class="card hero">
-    <div>
-      <div class="eyebrow">Aggregate registered share · project tests below</div>
-      <div class="bignum">{{ s.pct | pct }}</div>
-      {{ m.verdict(s, cfg) }}
-      {{ m.gauge(s, cfg) }}
+{% set latest = runs[0] %}
+<section class="task-rail" aria-label="Monthly workflow status">
+  <div class="task-rail-head"><div><span class="eyebrow">Recommended workflow</span><h2>Move each month from source to final</h2></div>
+    <span class="period-chip">Latest: {{ latest.period_month }}</span></div>
+  <div class="task-grid">
+    <a class="task-card complete" href="/gst8020/runs/{{ latest.id }}"><span class="task-status">✓</span><div><span>1 · Calculate</span><strong>Source processed</strong><small>Open {{ latest.label }}</small></div></a>
+    <a class="task-card {% if open_rect %}attention{% else %}complete{% endif %}" href="/gst8020/rectifications?run_id={{ latest.id }}"><span class="task-status">{% if open_rect %}{{ open_rect }}{% else %}✓{% endif %}</span><div><span>2 · Review</span><strong>{% if open_rect %}Resolve review items{% else %}Queue is clear{% endif %}</strong><small>{% if open_rect %}Action recommended before freeze{% else %}No open decisions{% endif %}</small></div></a>
+    <a class="task-card {% if latest.status == 'frozen' %}complete{% else %}current{% endif %}" href="/gst8020/runs/{{ latest.id }}"><span class="task-status">{% if latest.status == 'frozen' %}✓{% else %}3{% endif %}</span><div><span>3 · Finalise</span><strong>{% if latest.status == 'frozen' %}Month frozen{% else %}Draft awaiting approval{% endif %}</strong><small>{% if latest.status == 'frozen' %}Snapshot is locked{% else %}Review and freeze when ready{% endif %}</small></div></a>
+    <a class="task-card" href="/gst8020/year"><span class="task-status">4</span><div><span>4 · Report</span><strong>Analyse &amp; export</strong><small>Monthly, period and year to date</small></div></a>
+  </div>
+</section>
+
+{% for y in fy %}{% set s = y.total %}
+<section class="position-section">
+  <div class="section-title"><div><div class="eyebrow">{{ y.fy }} position</div><h2>Registered share of eligible spend</h2></div><a class="text-link" href="/gst8020/year">Open detailed report →</a></div>
+  <div class="card hero elevated">
+    <div class="position-primary">
+      <div class="bignum">{{ s.pct | pct }}</div>{{ m.verdict(s, cfg) }}
+      <p class="position-context">Measured against the {{ cfg.threshold_pct }}% registered-spend threshold.</p>{{ m.gauge(s, cfg) }}
     </div>
     <div class="stats">
       <div class="stat big"><span>Eligible spend</span><b>{{ s.eligible | inr }}</b></div>
-      <div class="stat"><span>Registered</span><b>{{ s.registered | inr }}</b></div>
-      <div class="stat"><span>Projects below floor</span><b>{{ s.below_projects }}</b></div>
-      <div class="stat"><span>Unregistered</span><b>{{ s.unregistered | inr }}</b></div>
-      <div class="stat {% if s.gap %}bad{% endif %}"><span>Project-wise indicative exposure @ {{ cfg.shortfall_tax_rate }}%</span><b>{{ s.exposure | inr }}</b></div>
+      <div class="stat"><span>Registered spend</span><b>{{ s.registered | inr }}</b></div>
+      <div class="stat"><span>Unregistered spend</span><b>{{ s.unregistered | inr }}</b></div>
+      <div class="stat {% if s.below_projects %}bad{% endif %}"><span>Projects below threshold</span><b>{{ s.below_projects }}</b></div>
+      <div class="stat {% if s.gap %}bad{% endif %}"><span>Indicative exposure</span><b>{{ s.exposure | inr }}</b></div>
     </div>
   </div>
 
-  <div class="grid g2" style="margin-top:14px">
-    <div class="card">
-      <div style="padding:15px 16px 4px"><h3>By project — supplementary indicator from Python rows</h3></div>
-      <div class="scroll"><table>
-        <thead><tr><th>Project</th><th class="n">Eligible</th><th class="n">Registered %</th>
-          <th style="width:120px">Against floor</th><th class="n">Exposure</th></tr></thead>
-        <tbody>
-        {% for p, v in y.projects.items() %}
-          <tr><td>{{ p }}</td><td class="n">{{ v.eligible | lakh }}</td>
-            <td class="n">{{ v.pct | pct }}</td>
-            <td><div class="bar {% if v.pct >= cfg.threshold_pct %}ok{% else %}bad{% endif %}">
-              <i style="width:{{ [v.pct, 100] | min | round(2) }}%"></i></div></td>
-            <td class="n" {% if v.gap %}style="color:var(--bad)"{% endif %}>{{ v.exposure | lakh }}</td></tr>
-        {% endfor %}
-        </tbody></table></div>
-    </div>
-
-    <div class="card">
-      <div style="padding:15px 16px 4px"><h3>Month by month</h3></div>
-      <div class="scroll"><table>
-        <thead><tr><th>Month</th><th class="n">Eligible</th><th class="n">Registered %</th>
-          <th>Status</th><th></th></tr></thead>
-        <tbody>
-        {% for mo in y.months %}
-          <tr><td>{{ mo.run.period_month }}</td>
-            <td class="n">{{ mo.s.eligible | lakh }}</td>
-            <td class="n">{{ mo.s.pct | pct }}</td>
-            <td>{% if mo.run.status == 'frozen' %}<span class="pill p-ok">Frozen</span>
-                {% else %}<span class="pill p-mute">Draft</span>{% endif %}</td>
-            <td><a href="/gst8020/runs/{{ mo.run.id }}">Open</a></td></tr>
-        {% endfor %}
-        </tbody></table></div>
-    </div>
+  <div class="dashboard-grid">
+    <div class="card data-card"><div class="card-heading"><div><span class="eyebrow">Project health</span><h2>Where attention is needed</h2></div></div>
+      <div class="scroll"><table><thead><tr><th>Project</th><th class="n">Eligible</th><th class="n">Registered</th><th>Position</th></tr></thead><tbody>
+      {% for p, v in y.projects.items() %}<tr><td><strong>{{ p }}</strong></td><td class="n">{{ v.eligible | lakh }}</td><td class="n">{{ v.pct | pct }}</td>
+        <td><div class="metric-bar"><i class="{% if v.pct >= cfg.threshold_pct %}ok{% else %}bad{% endif %}" style="width:{{ [v.pct,100] | min | round(2) }}%"></i><span>{{ 'On track' if v.pct >= cfg.threshold_pct else 'Below threshold' }}</span></div></td></tr>{% endfor %}
+      </tbody></table></div></div>
+    <div class="card data-card"><div class="card-heading"><div><span class="eyebrow">Monthly records</span><h2>Calculation history</h2></div><a href="/gst8020/period">Compare period</a></div>
+      <div class="month-list">{% for mo in y.months %}<a href="/gst8020/runs/{{ mo.run.id }}"><div><strong>{{ mo.run.period_month }}</strong><small>{{ mo.run.label }}</small></div>
+        <div class="month-metric"><strong>{{ mo.s.pct | pct }}</strong><span class="pill {% if mo.run.status == 'frozen' %}p-ok{% else %}p-mute{% endif %}">{{ mo.run.status | title }}</span></div></a>{% endfor %}</div></div>
   </div>
-
-  {% if s.below_projects or s.pct < cfg.alert_buffer_pct %}
-  <div class="callout {% if s.below_projects %}err{% else %}warn{% endif %}" style="margin-top:14px">
-    <strong>{{ s.below_projects }} project{{ '' if s.below_projects == 1 else 's' }} below the floor.</strong>
-    The aggregate percentage does not offset a project's gap. Review the project table and
-    the open voucher issues before using this indicative position.
-  </div>
-  {% endif %}
 </section>
 {% endfor %}
-
-<section>
-  <div class="tiles">
-    <div class="tile"><div class="k">Open rectifications</div><div class="v">{{ open_rect }}</div>
-      <div class="n"><a href="/gst8020/rectifications">Work the queue</a></div></div>
-    <div class="tile"><div class="k">Creditors on file</div><div class="v">{{ creditor_count }}</div>
-      <div class="n"><a href="/gst8020/creditors">Review GSTINs</a></div></div>
-    <div class="tile"><div class="k">Calculations stored</div><div class="v">{{ runs | length }}</div>
-      <div class="n">Every run is kept and can be reopened</div></div>
-  </div>
-</section>
 {% endif %}
 {% endblock %}

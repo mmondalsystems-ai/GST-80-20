@@ -1,0 +1,43 @@
+services:
+  - type: web
+    name: gst-80-20
+    runtime: docker
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /readyz
+    autoDeployTrigger: commit
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gst-80-20-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: SESSION_HTTPS_ONLY
+        value: "1"
+      - key: VAR_DIR
+        value: /var/data/gst8020/var
+      - key: UPLOAD_DIR
+        value: /var/data/gst8020/var/uploads
+      - key: MAX_UPLOAD_MB
+        value: "64"
+      - key: BACKUP_DIR
+        value: /var/data/gst8020/backups
+      - key: ORG_NAME
+        value: Oswal Group
+      - key: BOOTSTRAP_ADMIN_EMAIL
+        value: admin@oswalgroup.net
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
+    disk:
+      name: gst-80-20-files
+      mountPath: /var/data/gst8020
+      sizeGB: 1
+
+databases:
+  - name: gst-80-20-db
+    region: singapore
+    databaseName: gst8020
+    user: gst8020
+    postgresMajorVersion: "18"

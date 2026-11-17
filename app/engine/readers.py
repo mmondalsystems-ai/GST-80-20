@@ -10,6 +10,14 @@ import openpyxl
 
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
+# The client's replacement GST-registration export renamed three columns but
+# did not change their business meaning.  Canonicalise them before header
+# detection so both the legacy and current exports remain valid inputs.
+HEADER_ALIASES = {
+    "FIXED_GROUP": "GROUP_NAME",
+    "REG_NO": "GSTIN",
+}
+
 
 def norm(v) -> str:
     return re.sub(r"\s+", " ", str(v if v is not None else "")).strip()
@@ -61,7 +69,7 @@ def read_sheet(path_or_file, must_have, label):
     header_row, header = None, None
     candidates = []
     for i, row in enumerate(ws.iter_rows(min_row=1, max_row=60, values_only=True), 1):
-        present = {key(c) for c in row if c is not None}
+        present = {HEADER_ALIASES.get(key(c), key(c)) for c in row if c is not None}
         if present:
             candidates.append(present)
         if all(m in present for m in must_have):
@@ -100,7 +108,8 @@ def read_sheet(path_or_file, must_have, label):
     for i, heading in enumerate(header):
         if not heading:
             continue
-        field = canonical.get(key(heading), heading)
+        heading_key = HEADER_ALIASES.get(key(heading), key(heading))
+        field = canonical.get(heading_key, heading)
         if field in idx:
             wb.close()
             raise IngestError(f"{label}: duplicate column heading {field!r}.")

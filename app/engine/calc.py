@@ -18,6 +18,14 @@ DEFAULTS = {
     "threshold_pct": 80.0,
     "shortfall_tax_rate": 18.0,
     "alert_buffer_pct": 82.0,
+    # The replacement GST-registration export contains debtors, banks, assets
+    # and tax ledgers as well as suppliers.  Only approved creditor groups may
+    # feed party/GSTIN resolution; legacy groups containing "creditor" or
+    # ending in "and others" remain supported by the engine.
+    "creditor_group_allowlist": ["Sundry Creditors"],
+    # Used only to disambiguate multiple registrations.  It is editable because
+    # another company installation may not be registered in West Bengal.
+    "company_state_code": "19",
 }
 
 

@@ -1,113 +1,65 @@
 {% extends "base.html" %}{% import "_macros.html" as m %}{% set nav = 'overview' %}
-{% block title %}{{ run.period_month }}{% endblock %}
+{% block title %}{{ run.period_month }} result{% endblock %}
 {% block subnav %}{% include "_gst_nav.html" %}{% endblock %}
 {% block content %}
-<div class="page-head">
-  <div><div class="eyebrow">{{ run.financial_year }} · {{ run.period_month }}</div>
-    <h1>{{ run.label }}</h1>
-    <p class="sub">Run by {{ run.created_by.name }} on {{ run.created_at | stamp }} ·
-      {% if run.status == 'frozen' %}<span class="pill p-ok">Frozen {{ run.frozen_at | stamp }}</span>
-      {% elif run.status == 'superseded' %}<span class="pill p-warn">Superseded by a later run</span>
-      {% else %}<span class="pill p-mute">Draft</span>{% endif %}</p></div>
-  <div class="actions">
-    <a class="btn" href="/gst8020/runs/{{ run.id }}/rows">All {{ stats.rows }} rows</a>
-    <a class="btn" href="/gst8020/runs/{{ run.id }}/export.xlsx">Export workbook</a>
-    {% if user.can_edit and run.status == 'draft' %}
-      <form method="post" action="/gst8020/runs/{{ run.id }}/freeze" style="display:inline"
-            onsubmit="return confirm('Freeze this month permanently? No calculation or review decision can be changed afterwards.')">
-        <input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}">
-        <button class="primary" type="submit">Freeze month</button></form>
-    {% endif %}
-  </div>
+<a class="back-link" href="/gst8020">← Back to dashboard</a>
+<div class="page-head run-head">
+  <div><div class="eyebrow">{{ run.financial_year }} · {{ run.period_month }}</div><h1>{{ run.label }}</h1>
+    <div class="run-meta"><span>Created by {{ run.created_by.name }}</span><span>·</span><span>{{ run.created_at | stamp }}</span>
+      {% if run.status == 'frozen' %}<span class="pill p-ok">Frozen</span>{% elif run.status == 'superseded' %}<span class="pill p-warn">Superseded</span>{% else %}<span class="pill p-accent">Draft</span>{% endif %}</div></div>
+  <div class="actions"><a class="btn" href="/gst8020/runs/{{ run.id }}/export.xlsx">Export Excel</a><a class="btn" href="/gst8020/runs/{{ run.id }}/rows">View all {{ stats.rows }} rows</a></div>
 </div>
-{% if backup_notice %}
-<div class="callout {% if 'FAILED' in backup_notice %}err{% endif %}" style="margin-bottom:18px">{{ backup_notice }}</div>
-{% endif %}
 
-<section>
-  <div class="card hero">
-    <div>
-      <div class="eyebrow">Approved Python Report: eligible registered share</div>
-      <div class="bignum">{{ stats.pct | pct }}</div>
-      {{ m.verdict(stats, cfg) }}
-      {{ m.gauge(stats, cfg) }}
-    </div>
-    <div class="stats">
-      <div class="stat big"><span>Eligible spend</span><b>{{ stats.eligible | inr }}</b></div>
-      <div class="stat"><span>Registered</span><b>{{ stats.registered | inr }}</b></div>
-      <div class="stat"><span>Open review items</span><b>{{ open_rect }}</b></div>
-      <div class="stat"><span>Unregistered</span><b>{{ stats.unregistered | inr }}</b></div>
-      <div class="stat"><span>Ineligible spend</span><b>{{ stats.ineligible | inr }}</b></div>
-      <div class="stat {% if stats.gap %}bad{% endif %}"><span>Project-wise indicative exposure</span><b>{{ stats.exposure | inr }}</b></div>
-    </div>
+<ol class="progress-steps compact" aria-label="Calculation lifecycle">
+  <li class="done"><span>✓</span><div><strong>Calculated</strong><small>Source validated</small></div></li>
+  <li class="{% if open_rect %}current{% else %}done{% endif %}"><span>{% if open_rect %}2{% else %}✓{% endif %}</span><div><strong>Review</strong><small>{% if open_rect %}{{ open_rect }} item(s) open{% else %}Queue clear{% endif %}</small></div></li>
+  <li class="{% if run.status == 'frozen' %}done{% elif not open_rect %}current{% endif %}"><span>{% if run.status == 'frozen' %}✓{% else %}3{% endif %}</span><div><strong>Finalise</strong><small>{% if run.status == 'frozen' %}Month locked{% else %}Freeze when approved{% endif %}</small></div></li>
+</ol>
+
+{% if backup_notice %}<div class="callout {% if 'FAILED' in backup_notice %}err{% else %}ok subtle{% endif %}" role="status"><span>{{ backup_notice }}</span></div>{% endif %}
+{% if flash %}<div class="callout warn prominent"><strong>Attention</strong><span>{{ flash }}</span></div>{% endif %}
+
+<section><div class="card hero elevated">
+  <div class="position-primary"><div class="eyebrow">Eligible registered share</div><div class="bignum">{{ stats.pct | pct }}</div>{{ m.verdict(stats, cfg) }}
+    <p class="position-context">{{ 'Threshold achieved.' if stats.pct >= cfg.threshold_pct else 'Below the required threshold. Review unregistered suppliers.' }}</p>{{ m.gauge(stats, cfg) }}</div>
+  <div class="stats"><div class="stat big"><span>Eligible spend</span><b>{{ stats.eligible | inr }}</b></div><div class="stat"><span>Registered</span><b>{{ stats.registered | inr }}</b></div>
+    <div class="stat"><span>Unregistered</span><b>{{ stats.unregistered | inr }}</b></div><div class="stat"><span>Ineligible spend</span><b>{{ stats.ineligible | inr }}</b></div><div class="stat {% if stats.gap %}bad{% endif %}"><span>Indicative exposure</span><b>{{ stats.exposure | inr }}</b></div></div>
+</div></section>
+
+<section class="next-action card {% if open_rect %}needs-attention{% else %}ready{% endif %}">
+  <div class="next-icon" aria-hidden="true">{% if open_rect %}!{% else %}✓{% endif %}</div>
+  <div class="next-copy"><div class="eyebrow">Recommended next step</div>
+    {% if open_rect %}<h2>Review {{ open_rect }} flagged voucher{{ '' if open_rect == 1 else 's' }}</h2><p>Check GSTIN and GST-ledger inconsistencies before finalising this month. Decisions annotate the snapshot; source corrections require a new draft.</p>
+      <a class="btn primary" href="/gst8020/rectifications?run_id={{ run.id }}">Open review queue <span aria-hidden="true">→</span></a>
+    {% elif run.status == 'draft' %}<h2>This draft is ready to finalise</h2><p>Freezing locks this monthly snapshot against changes or reruns. You can continue to view and export it.</p>
+      <form method="post" action="/gst8020/runs/{{ run.id }}/freeze" onsubmit="return confirm('Freeze this month? The snapshot cannot be edited or rerun afterwards.')">
+        <input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}"><button class="primary" type="submit">Freeze {{ run.period_month }}</button></form>
+    {% else %}<h2>Month finalised</h2><p>This frozen snapshot is ready for reporting and export.</p><a class="btn primary" href="/gst8020/year">View year-to-date report</a>{% endif %}
   </div>
 </section>
 
-{% if open_rect %}
-<div class="callout warn" style="margin-bottom:22px">
-  <strong>{{ open_rect }} voucher(s) are waiting on an accounts decision.</strong>
-  The golden calculation has already classified these rows as Registered or Unregistered.
-  Review decisions annotate this snapshot; corrected source exports require a new draft run.
-  <a href="/gst8020/rectifications?run_id={{ run.id }}">Work the queue</a>.
-</div>
-{% endif %}
-
-<section>
-  <div class="grid g2">
-    <div class="card">
-      <div style="padding:15px 16px 4px"><h3>By project — supplementary indicator</h3></div>
-      <div class="scroll"><table>
-        <thead><tr><th>Project</th><th class="n">Eligible</th><th class="n">Registered %</th>
-          <th style="width:110px"></th><th class="n">Exposure</th></tr></thead>
-        <tbody>{% for p, v in projects.items() %}
-          <tr><td><a href="/gst8020/runs/{{ run.id }}/rows?project={{ p | urlencode }}">{{ p }}</a></td>
-            <td class="n">{{ v.eligible | lakh }}</td><td class="n">{{ v.pct | pct }}</td>
-            <td><div class="bar {% if v.pct >= cfg.threshold_pct %}ok{% else %}bad{% endif %}">
-              <i style="width:{{ [v.pct, 100] | min | round(2) }}%"></i></div></td>
-            <td class="n" {% if v.gap %}style="color:var(--bad)"{% endif %}>{{ v.exposure | lakh }}</td></tr>
-        {% endfor %}</tbody></table></div>
-    </div>
-
-    <div class="card">
-      <div style="padding:15px 16px 4px"><h3>Where to look next</h3></div>
-      <table><tbody>
-        <tr><td><a href="/gst8020/runs/{{ run.id }}/vendors">Unregistered suppliers</a></td>
-          <td class="note">Ranked by spend, with spelling variants grouped — the shortest route
-            to moving the percentage.</td></tr>
-        <tr><td><a href="/gst8020/runs/{{ run.id }}/exceptions">Data quality exceptions</a></td>
-          <td class="note">Credit-side reallocations, invalid GSTINs and differences between
-            the sender's email and approved Python rules.</td></tr>
-        <tr><td><a href="/gst8020/rectifications?run_id={{ run.id }}">Rectification queue</a></td>
-          <td class="note">Vouchers where the GSTIN and the GST ledger disagree.</td></tr>
-        <tr><td><a href="/gst8020/runs/{{ run.id }}/rows?flagged=1">Flagged rows</a></td>
-          <td class="note">Golden review items plus separate application diagnostics;
-            neither changes the source classification.</td></tr>
-      </tbody></table>
-      <div style="padding:14px 16px" class="note">
-        Source files: {% for k, v in files.items() %}<span class="mono">{{ v }}</span>{% if not loop.last %} · {% endif %}{% endfor %}
-      </div>
-    </div>
+<section><div class="section-title"><div><div class="eyebrow">Explore this result</div><h2>Analysis and follow-up</h2></div></div>
+  <div class="feature-links">
+    <a href="/gst8020/runs/{{ run.id }}/vendors"><span class="feature-icon">₹</span><div><strong>Unregistered suppliers</strong><small>Prioritise suppliers by eligible spend</small></div><span>→</span></a>
+    <a href="/gst8020/runs/{{ run.id }}/exceptions"><span class="feature-icon">!</span><div><strong>Data quality</strong><small>Inspect invalid GSTINs and source exceptions</small></div><span>→</span></a>
+    <a href="/gst8020/runs/{{ run.id }}/rows?flagged=1"><span class="feature-icon">≡</span><div><strong>Flagged rows</strong><small>See every transaction needing attention</small></div><span>→</span></a>
   </div>
 </section>
 
-<section>
-  <div class="card">
-    <div style="padding:15px 16px 4px"><h3>Summary</h3></div>
-    <div class="scroll"><table>
-      <thead><tr><th>Head</th><th>80-20</th><th>GST Status</th><th class="n">Sum of Closing</th></tr></thead>
-      <tbody>
-      {% for r in table %}
-        <tr {% if r.total %}class="tot"{% endif %}>
-          <td>{{ r.head }}</td>
-          {% if r.total %}<td colspan="2">{{ r.status }}</td>
-          {% else %}<td>{{ m.elig_pill(r.elig) }}</td><td>{{ m.status_pill(r.status) }}</td>{% endif %}
-          <td class="n">{{ r.amount | inr }}</td></tr>
-      {% endfor %}
-      </tbody></table></div>
-    <div style="padding:14px 16px" class="note">
-      Review items remain in their Python-calculated Registered or Unregistered bucket.
-      The percentage above follows the approved Report sheet's eligible-only absolute-value formula.
-    </div>
-  </div>
+<section class="dashboard-grid"><div class="card data-card"><div class="card-heading"><div><span class="eyebrow">By project</span><h2>Threshold position</h2></div></div>
+  <div class="scroll"><table><thead><tr><th>Project</th><th class="n">Eligible</th><th class="n">Registered</th><th>Position</th></tr></thead><tbody>{% for p,v in projects.items() %}<tr>
+    <td><a href="/gst8020/runs/{{ run.id }}/rows?project={{ p | urlencode }}"><strong>{{ p }}</strong></a></td><td class="n">{{ v.eligible | lakh }}</td><td class="n">{{ v.pct | pct }}</td>
+    <td><span class="pill {% if v.pct >= cfg.threshold_pct %}p-ok{% else %}p-bad{% endif %}">{{ 'On track' if v.pct >= cfg.threshold_pct else 'Below threshold' }}</span></td></tr>{% endfor %}</tbody></table></div></div>
+  <div class="card data-card"><div class="card-heading"><div><span class="eyebrow">Calculation summary</span><h2>Classification totals</h2></div></div>
+    <div class="scroll"><table><thead><tr><th>Classification</th><th>Status</th><th class="n">Amount</th></tr></thead><tbody>{% for r in table %}<tr {% if r.total %}class="tot"{% endif %}>
+      <td>{% if r.total %}{{ r.status }}{% else %}{{ r.elig }}{% endif %}</td><td>{% if not r.total %}{{ m.status_pill(r.status) }}{% endif %}</td><td class="n">{{ r.amount | inr }}</td></tr>{% endfor %}</tbody></table></div></div>
 </section>
+
+<details class="danger-zone"><summary>Administrative actions</summary><div class="danger-body">
+  <p>Deletion is exceptional and audited. A safety backup is created before the calculation is removed.</p>
+  {% if user.can_edit and ((run.status == 'draft' and (user.is_admin or run.created_by_id == user.id)) or (run.status == 'frozen' and user.is_admin)) %}
+  <form method="post" action="/gst8020/runs/{{ run.id }}/delete" onsubmit="return confirm('Remove this {{ run.status }} calculation? The audit record and backup will be retained.')">
+    <input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}"><div class="actions"><input type="text" name="reason" minlength="5" required placeholder="Reason for deletion"><button class="danger" type="submit">Delete {{ run.status }} calculation</button></div></form>
+  {% else %}<p class="note">You do not have permission to delete this calculation.</p>{% endif %}
+</div></details>
 {% endblock %}
