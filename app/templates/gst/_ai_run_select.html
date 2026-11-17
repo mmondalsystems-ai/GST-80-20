@@ -1,0 +1,1 @@
+<label>Calculated month<select name="run_id" required><option value="">Choose month</option>{% for run in runs %}<option value="{{ run.id }}">{{ run.period_month }} {{ run.financial_year }} · {{ run.label }} · {{ run.status }}</option>{% endfor %}</select></label>

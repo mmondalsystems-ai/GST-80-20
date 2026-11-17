@@ -53,7 +53,6 @@ def restore_backup(source, live, recovery_dir):
         db.execute("BEGIN EXCLUSIVE")
         if db.execute("SELECT count(*) FROM runs").fetchone()[0]:
             raise ValueError("Existing calculations cannot be overwritten by initialization")
-        activations = db.execute("SELECT license_id, installation_id, activated_at, last_seen_at FROM license_activations").fetchall()
         db.rollback()
     if any(Path(str(live) + suffix).exists() for suffix in ("-wal", "-shm", "-journal")):
         raise ValueError("Close all application processes before restoring the database")
@@ -67,16 +66,6 @@ def restore_backup(source, live, recovery_dir):
             original.backup(copy)
         with closing(connect_readonly(source)) as original, closing(sqlite3.connect(staged)) as copy:
             original.backup(copy)
-            # A stale backup must not restart an already activated local licence.
-            for license_id, installation, activated, last_seen in activations:
-                old = copy.execute("SELECT activated_at, last_seen_at FROM license_activations WHERE license_id=?", (license_id,)).fetchone()
-                if old:
-                    from .license import as_utc
-                    date_key = lambda value: as_utc(dt.datetime.fromisoformat(value))
-                    activated = min(activated, old[0], key=date_key)
-                    last_seen = max(last_seen, old[1], key=date_key)
-                copy.execute("INSERT OR REPLACE INTO license_activations VALUES (?, ?, ?, ?)",
-                             (license_id, installation, activated, last_seen))
             copy.commit()
         validate_backup(staged)
         with closing(sqlite3.connect(live, timeout=1)) as current:
@@ -128,7 +117,7 @@ def main():
             return 0
         source = eligible[int(choice) - 1]
         print("Recovery restores ALL accounts/passwords and data from this backup.")
-        print("Use its original login credentials. Installation ID and licence file remain unchanged.")
+        print("Use the original login credentials restored with that database.")
         print("Close any other running copies of this application first.")
         if input("Type RESTORE to confirm: ").strip() != "RESTORE":
             print("Recovery cancelled.")

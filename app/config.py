@@ -23,11 +23,7 @@ DATA_DIR = Path(os.getenv("GST8020_DATA_DIR", str(
 if load_dotenv:
     load_dotenv(DATA_DIR / ".env")
 
-# True when running on Vercel. The file system there is read-only except /tmp, which is
-# temporary, so anything that must persist lives in the database and the secrets come from
-# environment variables.
-ON_VERCEL = bool(os.getenv("VERCEL"))
-VAR_DIR = Path(os.getenv("VAR_DIR", "/tmp/gst8020" if ON_VERCEL else DATA_DIR / "var"))
+VAR_DIR = Path(os.getenv("VAR_DIR", DATA_DIR / "var"))
 
 
 def _bool(name: str, default: bool = False) -> bool:
@@ -48,8 +44,6 @@ def _secret_key() -> str:
     env = os.getenv("SECRET_KEY", "").strip()
     if env and env not in ("CHANGE_ME_TO_A_LONG_RANDOM_STRING", "change-me"):
         return env
-    if ON_VERCEL:
-        raise RuntimeError("Set the SECRET_KEY environment variable in Vercel (a long random string).")
     key_file = VAR_DIR / "secret.key"
     if key_file.exists():
         return key_file.read_text(encoding="utf-8").strip()
@@ -73,8 +67,6 @@ def _database_url() -> str:
     url = os.getenv("DATABASE_URL", "").strip()
     if url and "CHANGE_ME" not in url:
         return url
-    if ON_VERCEL:
-        raise RuntimeError("Set the DATABASE_URL environment variable in Vercel (Supabase Postgres).")
     return f"sqlite:///{(VAR_DIR / 'finops.db').as_posix()}"
 
 
@@ -88,9 +80,6 @@ def _bootstrap_password() -> str:
     env = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "").strip()
     if env and "CHANGE" not in env.upper():
         return env
-    if ON_VERCEL:
-        # Never fall back to the public default password on an internet-facing deployment.
-        raise RuntimeError("Set the BOOTSTRAP_ADMIN_PASSWORD environment variable in Vercel.")
     pw_file = VAR_DIR / "first-admin-password.txt"
     if pw_file.exists():
         return pw_file.read_text(encoding="utf-8").strip()
@@ -121,3 +110,17 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 USING_SQLITE = DATABASE_URL.startswith("sqlite")
 GENERATED_PASSWORD_FILE = VAR_DIR / "first-admin-password.txt"
+
+# Optional Anthropic integration. The API key deliberately stays outside the
+# database and source tree; the UI only reports whether it is configured.
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
+ANTHROPIC_API_URL = os.getenv("ANTHROPIC_API_URL", "https://api.anthropic.com/v1/messages").strip()
+ANTHROPIC_API_VERSION = os.getenv("ANTHROPIC_API_VERSION", "2023-06-01").strip()
+
+# Bound each workbook before openpyxl expands it in memory. The same protection
+# applies to Render and to the offline Windows build.
+try:
+    MAX_UPLOAD_MB = min(256, max(1, int(os.getenv("MAX_UPLOAD_MB", "64"))))
+except ValueError:
+    MAX_UPLOAD_MB = 64
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024

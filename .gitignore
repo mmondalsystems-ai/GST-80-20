@@ -1,8 +1,40 @@
 .env
+.env.backup
+var/
+wheelhouse/
 __pycache__/
 *.pyc
-venv/
 .venv/
-.vercel/
-var/
+.venv-previous-*/
+.deps/
+.tmp/
+.reset-archive/
+# Client-provided source files and calculated workbooks are local-only.
+demo-inputs/
+reference/*
+!reference/80-20.py
+*.xlsx
+!app/static/input-templates/*.xlsx
+# Explicitly approved validated client pack for repository-based testing.
+!test-inputs/August-2026-Client-Validated/*.xlsx
+# Superseded local copy; the validated folder above is authoritative.
+test-inputs/August-2026-New-Creditor-Format/
+*.xls
+*.csv
+*.eml
+*.msg
+*.zip
+!distribution/GST-80-20-client.zip
+# Local database and installer output (including generated credentials).
 *.db
+*.sqlite
+*.sqlite3
+*.log
+# Offline licence issuer material must never travel with the client package.
+issuer-private*.pem
+license.json
+license-state.json
+installation-id
+# The signing utility is maintained only in the separate issuer-controlled folder.
+/issue_license.py
+/distribution/windows/qa/

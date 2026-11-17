@@ -1,10 +1,9 @@
-"""Web-safe port of the client-approved ``reference/80-20.py`` algorithm.
+"""Web-safe port of the approved ``reference/80-20.py`` algorithm and updates.
 
-The legacy program is the calculation authority.  This module changes only the
-input/output boundary: rows arrive from the web upload and dictionaries are
-returned for persistence.  Party selection, filtering, keyword handling, bank
-treatment, built-in party-master corrections and the duplicate-CGST repair mirror the
-approved script.
+The legacy program remains the calculation baseline. Party selection, filtering,
+keyword handling, bank treatment, built-in party corrections and duplicate-CGST
+repair mirror it. Version-controlled later approvals add the replacement creditor
+master, state-aware registration selection, GST-ledger evidence and Output-RCM rules.
 """
 from collections import defaultdict
 import difflib
@@ -39,12 +38,17 @@ NEVER_COST_GROUPS = {
 }
 NEVER_COST_PARENT_GROUPS = {"TDS Receivable"}
 TAX_DUTY_FIXED_GROUPS = {"CGST", "SGST", "IGST", "TDS", "TCS"}
+GST_TAX_FIXED_GROUPS = {"CGST", "SGST", "IGST"}
 RCM_MARKER = "RCM"
 GST_RCM_VALUE = "GST-RCMechanism"
 OUTPUT_RCM_LEDGERS = {
     "OUTPUT CGST ON RCM",
     "OUTPUT SGST ON RCM",
     "OUTPUT IGST ON RCM",
+}
+NON_PARTY_MASTER_NAMES = {
+    "EXPENSE A/C", "EXPENSES A/C", "ROUND OFF", "ROUNDING OFF",
+    "SUSPENSE A/C", "SUSPENSE ACCOUNT",
 }
 
 
@@ -85,6 +89,36 @@ def is_output_rcm_ledger(value):
     return re.sub(r"\s+", " ", str(value or "").strip()).upper() in OUTPUT_RCM_LEDGERS
 
 
+def creditor_group_allowed(group, allowlist):
+    """Keep the mixed GST-registration export from becoming a party master.
+
+    The legacy file contains a few supplier subgroups named ``... and Others``;
+    those and any group explicitly containing ``creditor`` remain compatible.
+    Everything else must be deliberately allowlisted under Masters.
+    """
+    value = re.sub(r"\s+", " ", str(group or "").strip())
+    normal = value.casefold()
+    approved = {str(item or "").strip().casefold() for item in (allowlist or [])}
+    return bool(value and (normal in approved or "creditor" in normal
+                           or normal.endswith(" and others")))
+
+
+def creditor_name_allowed(name):
+    """Reject generic accounting ledgers misclassified as creditors in Tally."""
+    value = re.sub(r"\s+", " ", str(name or "").strip()).upper()
+    return bool(value and value not in NON_PARTY_MASTER_NAMES)
+
+
+def gst_tax_kind(group, particulars):
+    """Return a genuine GST tax-ledger kind, avoiding loose substring hits."""
+    fixed = re.sub(r"\s+", " ", str(group or "").strip()).upper()
+    if fixed in GST_TAX_FIXED_GROUPS:
+        return fixed
+    name = re.sub(r"\s+", " ", str(particulars or "").strip()).upper()
+    match = re.match(r"^(?:INPUT |OUTPUT )?(CGST|SGST|IGST)(?:\b|[^A-Z])", name)
+    return match.group(1) if match else ""
+
+
 def _number(value):
     if value in (None, ""):
         return 0
@@ -97,6 +131,8 @@ def calculate(daybook, voucher, creditors, cfg=None):
     never_groups = NEVER_COST_GROUPS
     excluded_parents = set(cfg.get("exclude_parent_groups", NEVER_COST_PARENT_GROUPS))
     explicitly_included = cfg.get("include_fixed_groups")
+    creditor_groups = cfg.get("creditor_group_allowlist", ["Sundry Creditors"])
+    company_state = str(cfg.get("company_state_code", "19") or "").strip().zfill(2)
 
     for row in daybook:
         row["_date"] = parse_date(row.get("Date"))
@@ -123,9 +159,13 @@ def calculate(daybook, voucher, creditors, cfg=None):
         by_voucher[row["_key"]].append(row)
     group_lookup = {(r["_key"], r.get("Particulars")): r.get("Fixed_Group_Name") for r in daybook}
     output_rcm_flags = defaultdict(bool)
+    voucher_tax_kinds = defaultdict(set)
     for row in daybook:
         if is_output_rcm_ledger(row.get("Particulars")):
             output_rcm_flags[row["_key"]] = True
+        kind = gst_tax_kind(row.get("Fixed_Group_Name"), row.get("Particulars"))
+        if kind and RCM_MARKER not in str(row.get("Particulars") or "").upper():
+            voucher_tax_kinds[row["_key"]].add(kind)
 
     rcm_flags, gst_flags = {}, {}
     for uid, lines in by_voucher.items():
@@ -133,22 +173,57 @@ def calculate(daybook, voucher, creditors, cfg=None):
             output_rcm_flags[uid]
             or any(RCM_MARKER in str(x.get("Particulars") or "").upper() for x in lines)
         )
-        gst_flags[uid] = any(
-            any(tag in str(x.get("Particulars") or "").upper() for tag in ("CGST", "SGST", "IGST"))
+        gst_flags[uid] = bool(voucher_tax_kinds.get(uid)) or any(
+            bool(gst_tax_kind(group_lookup.get((uid, x.get("Particulars"))),
+                              x.get("Particulars")))
             and RCM_MARKER not in str(x.get("Particulars") or "").upper() for x in lines)
 
-    creditor_gstin, creditor_display, names_with_gstin = {}, {}, []
+    mixed_registration_export = any("State_Code" in row or "Company_Name" in row
+                                    for row in creditors)
+    creditor_records, creditor_display, names_with_gstin = defaultdict(list), {}, []
     for row in creditors:
+        # Preserve exact legacy-file behaviour. Group filtering is required for
+        # the replacement registration export because that file deliberately
+        # includes debtors, banks, assets and tax ledgers too.
+        if (mixed_registration_export
+                and not creditor_group_allowed(row.get("Group_Name"), creditor_groups)):
+            continue
+        if mixed_registration_export and not creditor_name_allowed(row.get("Account_Name")):
+            continue
         gstin = str(row.get("GSTIN", row.get("gstin", "")) or "").strip()
+        state_code = str(row.get("State_Code") or (gstin[:2] if len(gstin) >= 2 else "")).strip()
         for field in ("Account_Name", "Legal_Cheque_Name", "account_name", "legal_name"):
             name = row.get(field)
             if not name:
                 continue
             nk = norm_name(name)
-            if nk not in creditor_gstin or (gstin and not creditor_gstin[nk]):
-                creditor_gstin[nk], creditor_display[nk] = gstin, str(name).strip()
+            record = (gstin, state_code)
+            if record not in creditor_records[nk]:
+                creditor_records[nk].append(record)
+            creditor_display.setdefault(nk, str(name).strip())
             if gstin:
                 names_with_gstin.append(str(name).strip())
+
+    def choose_gstin(nk, uid):
+        candidates = list(dict.fromkeys(g for g, _ in creditor_records.get(nk, []) if g))
+        if len(candidates) <= 1:
+            return (candidates[0] if candidates else ""), []
+        # Prefer structurally valid registrations when at least one is valid,
+        # but preserve the legacy treatment of a lone invalid populated value.
+        valid = [g for g in candidates if validate_gstin(g)[0] == "ok"]
+        pool = valid or candidates
+        if len(pool) == 1:
+            return pool[0], []
+        kinds = voucher_tax_kinds.get(uid, set())
+        if kinds.intersection({"CGST", "SGST"}):
+            local = [g for g in pool if g[:2] == company_state]
+            if len(local) == 1:
+                return local[0], []
+        elif kinds == {"IGST"}:
+            interstate = [g for g in pool if g[:2] != company_state]
+            if len(interstate) == 1:
+                return interstate[0], []
+        return "", pool
 
     def resolve_party(uid):
         candidates, known_candidates = [], []
@@ -160,7 +235,13 @@ def calculate(daybook, voucher, creditors, cfg=None):
                 continue
             nk = norm_name(line.get("Particulars"))
             amount = max(abs(line["Credit_Amount"]), abs(line["Debit_Amount"]))
-            if creditor_gstin.get(nk):
+            # The replacement registration export is a mixed ledger dump, so
+            # its allowed creditor-group rows remain authoritative party names
+            # even when GSTIN is blank. This matters for bank-payment vouchers:
+            # otherwise the credit-side bank can be mistaken for the supplier.
+            # Keep legacy-workbook behaviour unchanged for golden parity.
+            records = creditor_records.get(nk, [])
+            if records and (mixed_registration_export or any(g for g, _ in records)):
                 known_candidates.append((amount, nk, line))
             if line["Credit_Amount"] > 0 and line["Debit_Amount"] == 0:
                 candidates.append(line)
@@ -190,12 +271,17 @@ def calculate(daybook, voucher, creditors, cfg=None):
         uid, d = row["_key"], row["_date"]
         output_rcm = output_rcm_flags[uid]
         party = resolve_party(uid)
-        gstin = creditor_gstin.get(norm_name(party), "")
+        gstin, ambiguous_gstins = choose_gstin(norm_name(party), uid)
         for original, replacement in PARTY_MASTER_OVERRIDES.items():
             if norm_name(party) == norm_name(original):
                 party, gstin = replacement
+                ambiguous_gstins = []
                 break
         gst_ledger = gst_flags.get(uid, False)
+        if ambiguous_gstins:
+            add_review(uid, party,
+                       "Multiple GSTINs are on file and the voucher does not identify one unambiguously",
+                       "; ".join(ambiguous_gstins))
         if "kotak mahindra bank" in norm_name(party):
             if gst_ledger:
                 party, gstin = "Kotak Mahindra Bank", "19AAACK4409J2ZG"
@@ -213,7 +299,10 @@ def calculate(daybook, voucher, creditors, cfg=None):
             keyword = "BATCHING PLANT (DISEL)"
         eligibility = "Ineligible" if keyword or forced else "Eligible"
         rcm_tax_row = keyword in {"CGST", "SGST", "IGST"} and norm_name(gstin) == norm_name(GST_RCM_VALUE)
-        status = "Registered" if gstin else "Unregistered"
+        # Business-approved update: a genuine GST tax ledger is sufficient
+        # evidence that the concerned party is Registered even if the master is
+        # incomplete or has multiple registrations.  Do not invent a GSTIN.
+        status = "Registered" if gstin or gst_ledger else "Unregistered"
         is_bank = "bank" in norm_name(party)
         if is_bank:
             if not keyword:
@@ -231,12 +320,15 @@ def calculate(daybook, voucher, creditors, cfg=None):
 
         if not output_rcm and not is_bank and gstin and not gst_ledger and not rcm_tax_row:
             add_review(uid, party, "GSTIN on file but voucher has no GST ledger (confirm exempt supply, or fix booking)")
-        elif not output_rcm and not is_bank and gst_ledger and not gstin:
+        elif (not output_rcm and not is_bank and gst_ledger and not gstin
+              and not ambiguous_gstins):
             add_review(uid, party, "GST charged in voucher but no GSTIN on file for this party - update Creditors List")
 
         # Structural validation is an observation only. The source script
         # classifies any populated GST No. as Registered, even if invalid.
         flags = []
+        if ambiguous_gstins:
+            flags.append("ambiguous_gstin")
         if gstin and gstin != GST_RCM_VALUE:
             code, _ = validate_gstin(gstin)
             if code != "ok":

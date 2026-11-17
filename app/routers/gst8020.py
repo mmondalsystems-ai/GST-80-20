@@ -16,10 +16,11 @@ from ..models import (User, Run, RunRow, Rectification, LedgerOverride, Creditor
 from ..auth import require_user, require_editor, audit, require_csrf
 from ..templating import templates
 from ..catalogue import SOLUTIONS
-from ..config import UPLOAD_DIR
-from ..backup import backup_after_run
+from ..config import UPLOAD_DIR, MAX_UPLOAD_BYTES, MAX_UPLOAD_MB
+from ..backup import backup_after_run, archive_excel_after_run
 from ..engine import readers as R
-from ..engine.golden import calculate, voucher_key, INELIGIBLE_KEYWORDS
+from ..engine.golden import (calculate, voucher_key, INELIGIBLE_KEYWORDS,
+                             creditor_group_allowed, creditor_name_allowed)
 from ..engine.calc import (summarise, summarise_by_project, vendor_concentration,
                            summarise_portfolio, report_table, merged_config, DEFAULTS)
 from ..engine.gstin import validate as validate_gstin
@@ -34,6 +35,55 @@ RESOLUTIONS = {
     "wont_fix":              "No action — leave as is",
 }
 RESOLVED_STATUSES = set(RESOLUTIONS)
+
+
+async def read_xlsx_upload(upload: UploadFile, label: str) -> bytes:
+    """Read one workbook with a deterministic extension and size boundary."""
+    filename = (upload.filename or "").strip()
+    if not filename.lower().endswith(".xlsx"):
+        raise R.IngestError(f"{label}: choose an .xlsx workbook.")
+    content = await upload.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise R.IngestError(
+            f"{label}: the file is larger than the {MAX_UPLOAD_MB} MB upload limit.")
+    if not content:
+        raise R.IngestError(f"{label}: the uploaded file is empty.")
+    return content
+
+
+def creditors_with_manual_updates(db: Session, imported):
+    """Overlay audited application-master GSTIN corrections on a source export.
+
+    The uploaded workbook remains the base. A deliberately saved manual value
+    wins for that supplier, and a manual supplier missing from the workbook is
+    added as a Sundry Creditor fallback for party matching.
+    """
+    manual = {
+        row.name_key: row for row in db.scalars(
+            select(Creditor).where(Creditor.source == "manual", Creditor.gstin != ""))
+    }
+    effective, present, applied = [], set(), 0
+    for source in imported:
+        item = dict(source)
+        key = R.key(item.get("Account_Name"))
+        present.add(key)
+        correction = manual.get(key)
+        if correction:
+            item["GSTIN"] = correction.gstin
+            if not R.norm(item.get("PAN_no")):
+                item["PAN_no"] = correction.pan
+            applied += 1
+        effective.append(item)
+    for key, correction in manual.items():
+        if key not in present:
+            effective.append({
+                "Account_Name": correction.account_name,
+                "Group_Name": correction.group_name or "Sundry Creditors",
+                "GSTIN": correction.gstin,
+                "PAN_no": correction.pan,
+            })
+            applied += 1
+    return effective, applied
 
 
 # ------------------------------------------------------------------ settings
@@ -69,7 +119,8 @@ def ctx(request, user, **kw):
 
 @router.get("", response_class=HTMLResponse)
 def overview(request: Request, user: User = Depends(require_user), db: Session = Depends(get_db)):
-    runs = list(db.scalars(select(Run).order_by(Run.created_at.desc()).limit(24)))
+    runs = list(db.scalars(select(Run).where(Run.status != "superseded")
+                           .order_by(Run.created_at.desc()).limit(24)))
     cfg = load_config(db)
     fy_rows = fy_summary(db, cfg)
     open_rect = db.scalar(
@@ -79,7 +130,8 @@ def overview(request: Request, user: User = Depends(require_user), db: Session =
                    select(Run.id).where(Run.status != "superseded").scalar_subquery()))) or 0
     return templates.TemplateResponse(request, "gst/overview.html", ctx(
         request, user, runs=runs, fy=fy_rows, cfg=cfg, open_rect=open_rect,
-        creditor_count=db.scalar(select(func.count(Creditor.id))) or 0))
+        creditor_count=db.scalar(select(func.count(Creditor.id))) or 0,
+        flash=request.session.pop("flash", None)))
 
 
 def fy_summary(db: Session, cfg: dict):
@@ -117,6 +169,70 @@ def year_view(request: Request, user: User = Depends(require_user), db: Session 
                                       ctx(request, user, fy=fy_summary(db, cfg), cfg=cfg))
 
 
+def selected_period_runs(db: Session, financial_year: str, start: str, end: str,
+                         include_drafts: bool):
+    try:
+        start_date = dt.date.fromisoformat(f"{start}-01")
+        end_date = dt.date.fromisoformat(f"{end}-01")
+    except ValueError as exc:
+        raise HTTPException(400, "Choose valid start and end months.") from exc
+    if start_date > end_date:
+        raise HTTPException(400, "The start month must not be after the end month.")
+    expected_fy = (f"{start_date.year}-{start_date.year + 1}" if start_date.month >= 4
+                   else f"{start_date.year - 1}-{start_date.year}")
+    end_fy = (f"{end_date.year}-{end_date.year + 1}" if end_date.month >= 4
+              else f"{end_date.year - 1}-{end_date.year}")
+    if expected_fy != financial_year or end_fy != financial_year:
+        raise HTTPException(400, "The selected months must stay within one financial year.")
+    stmt = select(Run).where(
+        Run.financial_year == financial_year,
+        Run.status != "superseded",
+        Run.period_start >= start_date,
+        Run.period_start <= end_date,
+    )
+    if not include_drafts:
+        stmt = stmt.where(Run.status == "frozen")
+    return list(db.scalars(stmt.order_by(Run.period_start, Run.id)))
+
+
+@router.get("/period", response_class=HTMLResponse)
+def period_view(request: Request, fy: str = "", start: str = "", end: str = "",
+                include_drafts: bool = False, user: User = Depends(require_user),
+                db: Session = Depends(get_db)):
+    active = list(db.scalars(select(Run).where(Run.status != "superseded")
+                             .order_by(Run.period_start)))
+    years = sorted({run.financial_year for run in active}, reverse=True)
+    fy = fy or (years[0] if years else "")
+    available = [run for run in active if run.financial_year == fy]
+    if available:
+        start = start or min(run.period_start for run in available).strftime("%Y-%m")
+        end = end or max(run.period_start for run in available).strftime("%Y-%m")
+    runs = (selected_period_runs(db, fy, start, end, include_drafts)
+            if fy and start and end else [])
+    rows = []
+    for run in runs:
+        rows.extend(run_rows(db, run.id))
+    cfg = load_config(db)
+    return templates.TemplateResponse(request, "gst/period.html", ctx(
+        request, user, years=years, fy=fy, start=start, end=end,
+        include_drafts=include_drafts, runs=runs,
+        stats=summarise_portfolio(rows, cfg) if rows else None,
+        projects=summarise_by_project(rows, cfg) if rows else {}, cfg=cfg))
+
+
+@router.get("/period/export.xlsx")
+def export_period(fy: str, start: str, end: str, include_drafts: bool = False,
+                  user: User = Depends(require_user), db: Session = Depends(get_db)):
+    runs = selected_period_runs(db, fy, start, end, include_drafts)
+    if not runs:
+        raise HTTPException(404, "No qualifying calculations exist in the selected period.")
+    buf = X.build_period_workbook(db, runs, load_config(db))
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition":
+                 f'attachment; filename="80-20_{start}_to_{end}.xlsx"'})
+
+
 # ------------------------------------------------------------------ new run
 
 @router.get("/new", response_class=HTMLResponse)
@@ -138,25 +254,25 @@ async def new_run(request: Request,
         return templates.TemplateResponse(request, "gst/new.html",
             ctx(request, user, cfg=cfg, error=message), status_code=status_code)
     try:
-        db_rows = R.read_daybook(io.BytesIO(await daybook.read()))
-        sv_rows = R.read_voucher(io.BytesIO(await voucher.read()))
+        db_rows = R.read_daybook(io.BytesIO(await read_xlsx_upload(daybook, "Day Book Register")))
+        sv_rows = R.read_voucher(io.BytesIO(await read_xlsx_upload(voucher, "Search Voucher")))
     except R.IngestError as e:
         return reject(str(e))
     # Do not turn a missing/renamed numeric column or uncached text value into
     # a credible-looking zero-spend month.  The approved script expects typed
     # Excel numbers; blanks within a populated amount column still mean zero.
-    for label, source_rows, fields in (
+    for source_label, source_rows, fields in (
         ("Day Book", db_rows, ("Debit", "Credit")),
         ("Search Voucher", sv_rows, ("Debit_Amount", "Credit_Amount")),
     ):
         if not any(r.get(field) not in (None, "") for r in source_rows for field in fields):
-            return reject(f"{label}: both amount columns are empty. Check the Tally export.")
+            return reject(f"{source_label}: both amount columns are empty. Check the Tally export.")
         for number, row in enumerate(source_rows, 1):
             for field in fields:
                 value = row.get(field)
                 if value not in (None, "") and (isinstance(value, bool) or
                         not isinstance(value, (int, float)) or not math.isfinite(value)):
-                    return reject(f"{label}: {field} on data row {number} is not an Excel number.")
+                    return reject(f"{source_label}: {field} on data row {number} is not an Excel number.")
     approved = [r for r in sv_rows if str(r.get("Status", "")).strip().lower() == "approved"]
     if not approved:
         return reject("Search Voucher has no Approved rows. Check the file and Status column.")
@@ -185,17 +301,23 @@ async def new_run(request: Request,
             request, user, cfg=cfg,
             error=f"{requested_period} {requested_fy} is frozen. No replacement calculation can be created."),
             status_code=409)
+    requested_label = label.strip()
+    if requested_label and db.scalar(select(Run.id).where(
+            func.lower(Run.label) == requested_label.lower())):
+        return reject("That calculation label has already been used. Enter a unique label for this draft.", 409)
 
     try:
-        imported = R.read_creditors(io.BytesIO(await creditors.read()))
+        imported = R.read_creditors(io.BytesIO(
+            await read_xlsx_upload(creditors, "Creditors Details")))
     except R.IngestError as e:
         return reject(str(e))
 
     # The legacy script always calculates from the supplied three workbooks.
     # The shared master is refreshed for workflow use, but is never substituted
     # for this run's source export (which would make identical inputs drift).
+    effective_creditors, manual_gstin_count = creditors_with_manual_updates(db, imported)
     try:
-        result = calculate(db_rows, sv_rows, imported, cfg)
+        result = calculate(db_rows, sv_rows, effective_creditors, cfg)
     except (ValueError, TypeError) as e:
         return reject(f"Calculation stopped because an input value is invalid: {e}")
     rows = result["rows"]
@@ -219,13 +341,20 @@ async def new_run(request: Request,
     first_date = min(r["voucher_date"] for r in rows)
     fy = rows[0]["year"]
 
-    _, _, dupes = import_creditors(db, imported, user)
-    if dupes:
-        request.session["flash"] = (
-            f"{len(dupes)} supplier name(s) appeared more than once in the creditors export "
-            f"and were merged: {', '.join(dupes[:5])}"
-            + ("…" if len(dupes) > 5 else "")
-            + " — worth tidying in Tally.")
+    _, _, creditor_import = import_creditors(db, imported, user, cfg)
+    notices = []
+    if manual_gstin_count:
+        notices.append(f"{manual_gstin_count} saved manual GSTIN correction(s) were applied")
+    if creditor_import["excluded"]:
+        notices.append(f'{creditor_import["excluded"]} non-creditor ledger row(s) were excluded')
+    if creditor_import["duplicates"]:
+        notices.append(f'{len(creditor_import["duplicates"])} duplicate supplier name(s) were reviewed')
+    if creditor_import["conflicts"]:
+        notices.append(f'{len(creditor_import["conflicts"])} supplier name(s) have multiple GSTINs')
+    if creditor_import["invalid_gstins"]:
+        notices.append(f'{creditor_import["invalid_gstins"]} GSTIN value(s) failed validation')
+    if notices:
+        request.session["flash"] = ". ".join(notices) + ". See the rectification and data-quality views."
 
     # An earlier draft for the same month is kept, but superseded.
     for old in db.scalars(select(Run).where(Run.period_month == period,
@@ -243,7 +372,8 @@ async def new_run(request: Request,
 
     stats = summarise_portfolio(rows, cfg)
     stats["by_project"] = summarise_by_project(rows, cfg)
-    run = Run(label=label.strip() or f"{period} calculation",
+    run_label = requested_label or f"{period} calculation {dt.datetime.now():%Y%m%d-%H%M%S-%f}"
+    run = Run(label=run_label,
               period_month=period, period_start=first_date.replace(day=1), financial_year=fy,
               created_by_id=user.id,
               source_files=json.dumps({"daybook": daybook.filename, "voucher": voucher.filename,
@@ -300,64 +430,95 @@ async def new_run(request: Request,
             request, user, cfg=cfg,
             error="This month changed while the upload was running. Please refresh."),
             status_code=409)
+    notices, backup_errors = [], []
     try:
-        _, request.session["backup_notice"] = backup_after_run()
+        notices.append(backup_after_run()[1])
     except (OSError, RuntimeError, ValueError) as exc:
-        request.session["backup_notice"] = (
-            f"Calculation saved, but its database backup FAILED: {exc}")
+        backup_errors.append(f"database backup: {exc}")
+    try:
+        export_name = (f"80-20_{run.period_start:%Y-%m}_{run.id}_"
+                       f"{dt.datetime.now():%Y%m%d-%H%M%S}.xlsx")
+        notices.append(archive_excel_after_run(
+            X.build_workbook(db, run).getvalue(), export_name)[1])
+    except (OSError, RuntimeError, ValueError) as exc:
+        backup_errors.append(f"Excel report backup: {exc}")
+    request.session["backup_notice"] = " ".join(notices + (
+        ["Calculation saved, but automatic backup FAILED — " + "; ".join(backup_errors)]
+        if backup_errors else []))
     return RedirectResponse(f"/gst8020/runs/{run.id}", status_code=303)
 
 
-def import_creditors(db: Session, imported, user: User):
+def import_creditors(db: Session, imported, user: User, cfg=None):
     """Refresh the master from an export without losing manual corrections.
 
-    The Tally export can hold the same supplier more than once under different
-    capitalisation ("Chhaya Enterprises" and "CHHAYA ENTERPRISES"). Those are
-    merged into one record here -- the first spelling wins, and any GSTIN or PAN
-    found on either row is kept -- and the duplicates are reported so the
-    accounts team can tidy the Tally master itself.
+    The Tally export can hold the same supplier more than once. Duplicate rows
+    are grouped, conflicting GSTINs are never resolved by row order, and mixed
+    non-creditor groups in the replacement export are excluded and reported.
     """
-    added = updated = 0
-    duplicates = []
-    pending = {}
+    cfg = cfg or {}
+    allowlist = cfg.get("creditor_group_allowlist", ["Sundry Creditors"])
+    added = updated = excluded = invalid_gstins = 0
+    duplicates, conflicts = [], []
+    grouped = defaultdict(list)
+    mixed_registration_export = any("State_Code" in row or "Company_Name" in row
+                                    for row in imported)
     for c in imported:
         name = R.norm(c.get("Account_Name"))
         if not name:
             continue
+        if (mixed_registration_export
+                and not creditor_group_allowed(c.get("Group_Name"), allowlist)):
+            excluded += 1
+            continue
+        if mixed_registration_export and not creditor_name_allowed(name):
+            excluded += 1
+            continue
         k = R.key(name)
-        gstin = R.norm(c.get("GSTIN"))
-        pan = R.norm(c.get("PAN_no"))
-        row = pending.get(k) or db.scalar(select(Creditor).where(Creditor.name_key == k))
+        grouped[k].append(c)
+
+    for k, source_rows in grouped.items():
+        name = R.norm(source_rows[0].get("Account_Name"))
+        gstins = list(dict.fromkeys(R.norm(c.get("GSTIN")).upper()
+                                    for c in source_rows if R.norm(c.get("GSTIN"))))
+        pans = [R.norm(c.get("PAN_no")) for c in source_rows if R.norm(c.get("PAN_no"))]
+        legal_names = [R.norm(c.get("Legal_Cheque_Name")) for c in source_rows
+                       if R.norm(c.get("Legal_Cheque_Name"))]
+        if len(source_rows) > 1:
+            duplicates.append(name)
+        if len(gstins) > 1:
+            conflicts.append(name)
+        invalid_gstins += sum(validate_gstin(g, pans[0] if pans else "")[0] != "ok"
+                              for g in gstins)
+
+        row = db.scalar(select(Creditor).where(Creditor.name_key == k))
         if row is None:
             row = Creditor(name_key=k, account_name=name)
             db.add(row)
             added += 1
         else:
-            if k in pending:
-                duplicates.append(name)
-                # Keep whichever spelling carried the detail.
-                if gstin and not row.gstin:
-                    row.gstin = gstin
-                if pan and not row.pan:
-                    row.pan = pan
-                row.gstin_valid = validate_gstin(row.gstin, row.pan)[0] if row.gstin else ""
-                continue
             updated += 1
-        pending[k] = row
-        row.legal_name = R.norm(c.get("Legal_Cheque_Name"))
-        row.group_name = R.norm(c.get("Group_Name"))
-        row.pan = pan
+        row.legal_name = legal_names[0] if legal_names else ""
+        row.group_name = R.norm(source_rows[0].get("Group_Name"))
+        row.pan = pans[0] if pans else ""
         # A GSTIN filled in here by the accounts team is not overwritten by a
-        # blank in the next export.
-        if gstin or row.source != "manual":
-            if gstin:
-                row.gstin = gstin
+        # blank or an ambiguous set in the next export. Imported records do not
+        # silently retain an arbitrary first GSTIN when the source conflicts.
+        if len(gstins) == 1 and row.source != "manual":
+            row.gstin = gstins[0]
+            row.source = "import"
+        elif len(gstins) > 1 and row.source != "manual":
+            row.gstin = ""
         row.gstin_valid = validate_gstin(row.gstin, row.pan)[0] if row.gstin else ""
     audit(db, user, "import_creditors", "creditor", "",
-          after={"added": added, "updated": updated, "duplicate_names": len(duplicates)},
-          detail=("Duplicate supplier names merged: " + ", ".join(duplicates[:20]))
-          if duplicates else "")
-    return added, updated, duplicates
+          after={"added": added, "updated": updated, "excluded": excluded,
+                 "duplicate_names": len(duplicates), "conflicting_names": len(conflicts),
+                 "invalid_gstins": invalid_gstins},
+          detail=("Duplicates: " + ", ".join(duplicates[:10]) + "; conflicts: "
+                  + ", ".join(conflicts[:10])).strip("; "))
+    return added, updated, {
+        "excluded": excluded, "duplicates": duplicates, "conflicts": conflicts,
+        "invalid_gstins": invalid_gstins,
+    }
 
 
 # ------------------------------------------------------------------ run view
@@ -387,10 +548,11 @@ def run_detail(request: Request, run_id: int, user: User = Depends(require_user)
                           .where(Rectification.run_id == run_id,
                                  Rectification.status.in_(("open", "in_progress")))) or 0
     backup_notice = request.session.pop("backup_notice", None)
+    flash = request.session.pop("flash", None)
     return templates.TemplateResponse(request, "gst/run.html", ctx(
         request, user, run=run, stats=stats, cfg=cfg, table=report_table(rows, cfg),
         projects=summarise_by_project(rows, cfg), open_rect=open_rect,
-        files=json.loads(run.source_files or "{}"), backup_notice=backup_notice))
+        files=json.loads(run.source_files or "{}"), backup_notice=backup_notice, flash=flash))
 
 
 @router.get("/runs/{run_id}/rows", response_class=HTMLResponse)
@@ -473,6 +635,9 @@ def exceptions(request: Request, run_id: int, user: User = Depends(require_user)
         "cement_rcm_carveout": ("Cement RCM carve-out",
                                 "Cement from an unregistered dealer is not deemed registered, so the "
                                 "RCM override was not applied to these rows."),
+        "ambiguous_gstin": ("Multiple GSTINs need confirmation",
+                            "The supplier has more than one valid registration and the voucher did "
+                            "not identify one unambiguously. The application did not choose by row order."),
     }
     for code in list(groups):
         if code.startswith("gstin_"):
@@ -510,7 +675,8 @@ def rectifications(request: Request, run_id: int | None = None, status: str = "o
     return templates.TemplateResponse(request, "gst/rectifications.html", ctx(
         request, user, items=items, users=users, counts=counts, status=status, flash=flash,
         run_id=run_id, mine=mine, open_value=open_value,
-        runs=list(db.scalars(select(Run).order_by(Run.created_at.desc()).limit(24)))))
+        runs=list(db.scalars(select(Run).where(Run.status != "superseded")
+                             .order_by(Run.created_at.desc()).limit(24)))))
 
 
 @router.post("/rectifications/{item_id}", dependencies=[Depends(require_csrf)])
@@ -591,8 +757,42 @@ def list_overrides(request: Request, raw: str = "", user: User = Depends(require
 
 # ------------------------------------------------------------------- freezing
 
+@router.post("/runs/{run_id}/delete", dependencies=[Depends(require_csrf)])
+def delete_run(run_id: int, request: Request, reason: str = Form(...),
+               user: User = Depends(require_editor), db: Session = Depends(get_db)):
+    """Soft-delete a draft, or let an administrator remove a frozen snapshot."""
+    run = get_run(db, run_id)
+    if run.status not in {"draft", "frozen"}:
+        raise HTTPException(409, "Only an active draft or frozen calculation can be deleted.")
+    if run.status == "frozen" and not user.is_admin:
+        raise HTTPException(403, "Only an administrator can delete a frozen month.")
+    if run.status == "draft" and not user.is_admin and run.created_by_id != user.id:
+        raise HTTPException(403, "Only an administrator can delete another preparer's draft.")
+    reason = reason.strip()
+    if len(reason) < 5:
+        raise HTTPException(400, "Enter a brief deletion reason of at least five characters.")
+    # A recoverable snapshot is mandatory before the active calculation is hidden.
+    try:
+        backup_after_run()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(503, f"Draft was not deleted because the safety backup failed: {exc}")
+    original_status = run.status
+    changed = db.execute(update(Run).where(Run.id == run_id, Run.status == original_status)
+                         .values(status="superseded",
+                                 notes=f"[DELETED] {reason}"[:4000])).rowcount
+    if changed != 1:
+        db.rollback()
+        raise HTTPException(409, "This calculation changed while it was being deleted. Refresh and retry.")
+    action = "delete_frozen_run" if original_status == "frozen" else "delete_draft_run"
+    audit(db, user, action, "run", run.id,
+          before={"status": original_status}, after={"status": "superseded"}, detail=reason)
+    db.commit()
+    request.session["flash"] = (f"{original_status.title()} {run.period_month} was removed. "
+                                "The audit record and backup were retained.")
+    return RedirectResponse("/gst8020", status_code=303)
+
 @router.post("/runs/{run_id}/freeze", dependencies=[Depends(require_csrf)])
-def freeze_run(run_id: int, user: User = Depends(require_editor), db: Session = Depends(get_db)):
+def freeze_run(run_id: int, user: User = Depends(require_user), db: Session = Depends(get_db)):
     run = get_run(db, run_id)
     if run.status != "draft":
         raise HTTPException(409, "Only a draft calculation can be frozen.")
@@ -634,7 +834,8 @@ def missing_gstin(user: User = Depends(require_user), db: Session = Depends(get_
 async def import_gstin(request: Request, sheet: UploadFile = File(...),
                        user: User = Depends(require_editor), db: Session = Depends(get_db)):
     try:
-        rows = R.read_sheet(io.BytesIO(await sheet.read()), ["ACCOUNT_NAME", "GSTIN"],
+        rows = R.read_sheet(io.BytesIO(await read_xlsx_upload(sheet, "GSTIN completion")),
+                            ["ACCOUNT_NAME", "GSTIN"],
                             "GSTIN completion sheet")
     except R.IngestError as e:
         raise HTTPException(400, str(e))
@@ -700,7 +901,7 @@ def update_creditor(creditor_id: int, request: Request, gstin: str = Form(""),
                                     status_code=303)
     audit(db, user, "set_gstin", "creditor", row.account_name,
           before={"gstin": row.gstin}, after={"gstin": g})
-    row.gstin, row.source, row.updated_by_id = g, "manual", user.id
+    row.gstin, row.source, row.updated_by_id = g, ("manual" if g else "import"), user.id
     row.gstin_valid = validate_gstin(g, row.pan)[0] if g else ""
     db.commit()
     return RedirectResponse(request.headers.get("referer", "/gst8020/creditors"), status_code=303)
@@ -721,9 +922,14 @@ async def save_masters(request: Request, user: User = Depends(require_editor),
     cfg = load_config(db)
     if "ineligible_keywords" in form:
         raise HTTPException(409, "Eligibility keywords are fixed by the supplied 80-20.py.")
-    for field in ("include_fixed_groups", "exclude_parent_groups"):
+    for field in ("include_fixed_groups", "exclude_parent_groups", "creditor_group_allowlist"):
         if field in form:
             cfg[field] = [line.strip() for line in str(form[field]).splitlines() if line.strip()]
+    if "company_state_code" in form:
+        state_code = str(form["company_state_code"]).strip()
+        if not (state_code.isdigit() and len(state_code) <= 2):
+            raise HTTPException(400, "Company state code must be a one- or two-digit GST state code.")
+        cfg["company_state_code"] = state_code.zfill(2)
     for field in ("shortfall_tax_rate", "threshold_pct", "alert_buffer_pct"):
         if field in form:
             try:

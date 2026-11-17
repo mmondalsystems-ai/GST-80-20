@@ -1,21 +1,25 @@
 <!doctype html>
 <html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in · {{ portal }}</title><link rel="stylesheet" href="/static/app.css">
-</head><body>
-<div class="login"><div class="card">
-  <div class="eyebrow">{{ org }}</div>
-  <h1>{{ portal }}</h1>
-  <p class="sub" style="margin-bottom:20px">Sign in to continue.</p>
-  {% if error %}<div class="callout err" style="margin-bottom:16px">{{ error }}</div>{% endif %}
-  <form method="post" action="/login">
-    <input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}">
-    <input type="hidden" name="next" value="{{ next }}">
-    <label class="field"><span>Email</span>
-      <input type="email" name="email" required autofocus autocomplete="username"></label>
-    <label class="field"><span>Password</span>
-      <input type="password" name="password" required autocomplete="current-password"></label>
-    <button class="primary" type="submit" style="width:100%">Sign in</button>
-  </form>
-</div></div>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark">
+<title>Sign in · {{ portal }}</title><link rel="stylesheet" href="/static/app.css?v=20261115-ui3">
+</head><body class="login-page">
+<main class="login-shell">
+  <section class="login-story" aria-label="About the workspace">
+    <div class="login-brand"><span>80</span><div><strong>{{ org }}</strong><small>GST 80:20 workspace</small></div></div>
+    <div class="login-message"><div class="eyebrow">Monthly compliance, made clear</div><h1>From source files to an audit-ready position.</h1>
+      <p>Calculate, review and finalise each month in one guided workflow built around the approved business logic.</p></div>
+    <ul class="login-benefits"><li><span>✓</span>Consistent Python calculation</li><li><span>✓</span>Clear review and rectification trail</li><li><span>✓</span>Local data and controlled exports</li></ul>
+  </section>
+  <section class="login-panel">
+    <div class="login-card"><div class="eyebrow">Secure access</div><h2>Welcome back</h2><p class="sub">Sign in to continue to your GST workspace.</p>
+      {% if error %}<div class="callout err" role="alert"><strong>Sign-in failed</strong><span>{{ error }}</span></div>{% endif %}
+      <form method="post" action="/login">
+        <input type="hidden" name="csrf_token_value" value="{{ csrf_token(request) }}"><input type="hidden" name="next" value="{{ next }}">
+        <label class="field"><span>Email address</span><input type="email" name="email" required autofocus autocomplete="username" placeholder="name@company.com"></label>
+        <label class="field"><span>Password</span><input type="password" name="password" required autocomplete="current-password" placeholder="Enter your password"></label>
+        <button class="primary large" type="submit">Sign in <span aria-hidden="true">→</span></button>
+      </form><p class="login-help">Access is managed by your local administrator.</p>
+    </div>
+  </section>
+</main>
 </body></html>

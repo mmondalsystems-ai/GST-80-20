@@ -35,15 +35,6 @@ class User(Base):
     def is_admin(self):    return self.role == "admin"
 
 
-class LicenseActivation(Base):
-    """First use of each signed offline licence on this installation."""
-    __tablename__ = "license_activations"
-    license_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    installation_id: Mapped[str] = mapped_column(String(36), index=True)
-    activated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
-    last_seen_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
-
-
 class Run(Base):
     """One month's calculation, kept as a permanent snapshot."""
     __tablename__ = "runs"
@@ -191,3 +182,86 @@ class AuditLog(Base):
     before: Mapped[str] = mapped_column(Text, default="")
     after: Mapped[str] = mapped_column(Text, default="")
     detail: Mapped[str] = mapped_column(Text, default="")
+
+
+class AISetting(Base):
+    """One-row, disabled-by-default control plane for optional Anthropic features."""
+    __tablename__ = "ai_settings"
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    explain_classification: Mapped[bool] = mapped_column(Boolean, default=False)
+    monthly_risk_summary: Mapped[bool] = mapped_column(Boolean, default=False)
+    group_rectifications: Mapped[bool] = mapped_column(Boolean, default=False)
+    results_qa: Mapped[bool] = mapped_column(Boolean, default=False)
+    creditor_suggestions: Mapped[bool] = mapped_column(Boolean, default=False)
+    draft_narratives: Mapped[bool] = mapped_column(Boolean, default=False)
+    model: Mapped[str] = mapped_column(String(100), default="claude-sonnet-5")
+    max_tokens: Mapped[int] = mapped_column(Integer, default=1200)
+    input_cost_per_million: Mapped[float] = mapped_column(Float, default=0)
+    output_cost_per_million: Mapped[float] = mapped_column(Float, default=0)
+    monthly_budget_usd: Mapped[float] = mapped_column(Float, default=0)
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class AIInteraction(Base):
+    """User-visible AI result. Source references keep each answer reviewable."""
+    __tablename__ = "ai_interactions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    capability: Mapped[str] = mapped_column(String(40), index=True)
+    question: Mapped[str] = mapped_column(Text, default="")
+    response: Mapped[str] = mapped_column(Text, default="")
+    source_refs: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+    user: Mapped["User"] = relationship()
+    run: Mapped["Run | None"] = relationship()
+
+
+class AIUsage(Base):
+    """FinOps telemetry captured from each Anthropic response or error."""
+    __tablename__ = "ai_usage"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True)
+    interaction_id: Mapped[int | None] = mapped_column(ForeignKey("ai_interactions.id", ondelete="SET NULL"), nullable=True)
+    capability: Mapped[str] = mapped_column(String(40), index=True)
+    model: Mapped[str] = mapped_column(String(100), default="")
+    success: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cache_creation_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    estimated_cost_usd: Mapped[float] = mapped_column(Float, default=0)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    request_id: Mapped[str] = mapped_column(String(100), default="")
+    error_type: Mapped[str] = mapped_column(String(80), default="")
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+
+
+class AISuggestion(Base):
+    """An untrusted AI recommendation that always requires a human disposition."""
+    __tablename__ = "ai_suggestions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    interaction_id: Mapped[int] = mapped_column(ForeignKey("ai_interactions.id", ondelete="CASCADE"), index=True)
+    creditor_id: Mapped[int | None] = mapped_column(ForeignKey("creditors.id", ondelete="SET NULL"), nullable=True)
+    suggestion_type: Mapped[str] = mapped_column(String(40), default="creditor_match")
+    current_value: Mapped[str] = mapped_column(Text, default="")
+    proposed_value: Mapped[str] = mapped_column(Text, default="")
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    reviewed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reviewed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class AppSecret(Base):
+    """Encrypted application secrets. Values are never rendered or audited."""
+    __tablename__ = "app_secrets"
+    name: Mapped[str] = mapped_column(String(80), primary_key=True)
+    encrypted_value: Mapped[str] = mapped_column(Text)
+    fingerprint: Mapped[str] = mapped_column(String(20), default="")
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)

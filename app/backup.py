@@ -14,7 +14,7 @@ import tempfile
 import uuid
 
 from .config import BACKUP_DIR, BACKUP_DIR_EXPLICIT, DATABASE_URL, VAR_DIR
-from .license import installation_id
+from .identity import installation_id
 
 
 def _sqlite_snapshot(destination: Path):
@@ -56,8 +56,6 @@ def backup_after_run(today=None):
     Returns (created, message). Failure never rolls back an already-saved run;
     the caller must display the failure prominently.
     """
-    if os.getenv("VERCEL"):
-        return False, "Cloud deployment: the database is backed up by Supabase, no local backup was made."
     today = today or dt.date.today()
     if BACKUP_DIR_EXPLICIT and not BACKUP_DIR.is_dir():
         raise FileNotFoundError(f"Configured backup folder is unavailable: {BACKUP_DIR}")
@@ -84,3 +82,25 @@ def backup_after_run(today=None):
         finally:
             staging.unlink(missing_ok=True)
     return True, f"Database backup created at {final}"
+
+
+def archive_excel_after_run(content: bytes, filename: str):
+    """Atomically retain the calculated workbook beside the database backup."""
+    if BACKUP_DIR_EXPLICIT and not BACKUP_DIR.is_dir():
+        raise FileNotFoundError(f"Configured backup folder is unavailable: {BACKUP_DIR}")
+    if not content:
+        raise RuntimeError("The calculated workbook was empty")
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    safe_name = "".join(ch for ch in filename if ch.isalnum() or ch in "-_.")
+    if not safe_name.lower().endswith(".xlsx"):
+        safe_name += ".xlsx"
+    final = BACKUP_DIR / safe_name
+    staging = BACKUP_DIR / f".export-{uuid.uuid4().hex[:8]}.partial"
+    try:
+        staging.write_bytes(content)
+        if staging.stat().st_size != len(content):
+            raise RuntimeError("Excel backup size did not match the generated workbook")
+        os.replace(staging, final)
+    finally:
+        staging.unlink(missing_ok=True)
+    return True, f"Excel report archived at {final}"

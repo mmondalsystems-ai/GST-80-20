@@ -1,9 +1,37 @@
-<div class="subnav"><div class="inner">
-  <a href="/gst8020" {% if nav == 'overview' %}class="on"{% endif %}>Overview</a>
-  <a href="/gst8020/year" {% if nav == 'year' %}class="on"{% endif %}>Year to date</a>
-  <a href="/gst8020/rectifications" {% if nav == 'rect' %}class="on"{% endif %}>Rectification queue</a>
-  <a href="/gst8020/creditors" {% if nav == 'creditors' %}class="on"{% endif %}>Creditors &amp; GSTIN</a>
-  <a href="/gst8020/masters" {% if nav == 'masters' %}class="on"{% endif %}>Masters</a>
-  <a href="/admin/audit" {% if nav == 'audit' %}class="on"{% endif %}>Audit trail</a>
-  {% if user.can_edit %}<a href="/gst8020/new" {% if nav == 'new' %}class="on"{% endif %}>New calculation</a>{% endif %}
-</div></div>
+<div class="workspace-nav">
+  <div class="inner">
+    <nav class="workflow-nav" aria-label="GST 80:20 workflow">
+      <a href="/gst8020" {% if nav == 'overview' %}class="on" aria-current="page"{% endif %}>
+        <span>Dashboard</span>
+      </a>
+      {% if user.can_edit %}<a href="/gst8020/new" {% if nav == 'new' %}class="on" aria-current="page"{% endif %}>
+        <span>New calculation</span>
+      </a>{% endif %}
+      <a href="/gst8020/rectifications" {% if nav == 'rect' %}class="on" aria-current="page"{% endif %}>
+        <span>Review queue</span>
+      </a>
+      <a href="/gst8020/year" {% if nav in ('year', 'period') %}class="on" aria-current="page"{% endif %}>
+        <span>Reports</span>
+      </a>
+      <a href="/gst8020/ai" {% if nav == 'ai' %}class="on" aria-current="page"{% endif %}>
+        <span>AI Workspace</span>
+      </a>
+    </nav>
+    <details class="tools-menu">
+      <summary {% if nav in ('creditors','masters','audit','overrides') %}class="on"{% endif %}>Data &amp; settings <span aria-hidden="true">⌄</span></summary>
+      <div class="tools-popover">
+        <div class="menu-group"><span>Reporting</span>
+          <a href="/gst8020/year">Year to date</a>
+          <a href="/gst8020/period">Selected period</a>
+        </div>
+        <div class="menu-group"><span>Reference data</span>
+          <a href="/gst8020/creditors">Creditors &amp; GSTIN</a>
+          <a href="/gst8020/masters">Calculation masters</a>
+        </div>
+        <div class="menu-group"><span>Control</span>
+          <a href="/admin/audit">Audit trail</a>
+        </div>
+      </div>
+    </details>
+  </div>
+</div>
