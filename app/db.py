@@ -1,12 +1,16 @@
 """Database engine and session handling."""
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
-from .config import DATABASE_URL
+from sqlalchemy.pool import NullPool
+from .config import DATABASE_URL, ON_VERCEL
 
 connect_args = {}
 engine_options = {"pool_pre_ping": True, "future": True}
 if DATABASE_URL.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
+elif ON_VERCEL:
+    # Serverless: open a connection per request and let the Supabase pooler manage them.
+    engine_options["poolclass"] = NullPool
 else:
     # Render can recycle idle Postgres connections during deploys or maintenance.
     # Recycle them proactively and fail promptly instead of hanging a request.
